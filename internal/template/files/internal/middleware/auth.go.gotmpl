@@ -1,0 +1,45 @@
+package middleware
+
+import (
+	"strings"
+
+	"github.com/gin-gonic/gin"
+	"github.com/redis/go-redis/v9"
+
+	"{{ .ModulePath }}/internal/apperror"
+	"{{ .ModulePath }}/internal/cache"
+	"{{ .ModulePath }}/internal/constant"
+	"{{ .ModulePath }}/internal/ctxkey"
+	"{{ .ModulePath }}/internal/response"
+	"{{ .ModulePath }}/internal/token"
+)
+
+// Auth verifies the Paseto bearer token, checks the blacklist, and injects
+// user_id/user_role into the request context.
+func Auth(paseto *token.Paseto, r *redis.Client) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		raw := c.GetHeader(constant.HeaderAuthorization)
+		if !strings.HasPrefix(raw, "Bearer ") {
+			response.Error(c, apperror.Unauthorized(apperror.CodeAuthUnauthenticated))
+			return
+		}
+		tok := strings.TrimPrefix(raw, "Bearer ")
+
+		claims, err := paseto.Verify(tok)
+		if err != nil {
+			response.Error(c, apperror.Unauthorized(apperror.CodeAuthTokenInvalid).WithCause(err))
+			return
+		}
+
+		exists, _ := r.Exists(c.Request.Context(), cache.KeyBlacklist+claims.JTI).Result()
+		if exists > 0 {
+			response.Error(c, apperror.Unauthorized(apperror.CodeAuthTokenBlacklisted))
+			return
+		}
+
+		ctx := ctxkey.WithUserID(c.Request.Context(), claims.Subject)
+		ctx = ctxkey.WithUserRole(ctx, claims.Role)
+		c.Request = c.Request.WithContext(ctx)
+		c.Next()
+	}
+}

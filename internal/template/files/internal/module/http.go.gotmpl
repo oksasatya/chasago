@@ -1,0 +1,57 @@
+package module
+
+import (
+	"context"
+	"net/http"
+	"strconv"
+	"time"
+
+	"github.com/gin-gonic/gin"
+	"go.uber.org/fx"
+	"go.uber.org/zap"
+
+	"{{ .ModulePath }}/internal/config"
+)
+
+var HTTP = fx.Module("http",
+	fx.Provide(newEngine),
+	fx.Provide(newHTTPServer),
+	fx.Invoke(registerHTTPLifecycle),
+)
+
+func newEngine(cfg *config.Config) *gin.Engine {
+	if cfg.App.Env == "production" {
+		gin.SetMode(gin.ReleaseMode)
+	}
+	r := gin.New()
+	return r
+}
+
+func newHTTPServer(cfg *config.Config, engine *gin.Engine) *http.Server {
+	return &http.Server{
+		Addr:              ":" + strconv.Itoa(cfg.App.Port),
+		Handler:           engine,
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+}
+
+func registerHTTPLifecycle(lc fx.Lifecycle, srv *http.Server, l *zap.Logger) {
+	lc.Append(fx.Hook{
+		OnStart: func(_ context.Context) error {
+			l.Info("http server listening", zap.String("addr", srv.Addr))
+			go func() {
+				if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+					l.Error("http server error", zap.Error(err))
+				}
+			}()
+			return nil
+		},
+		OnStop: func(ctx context.Context) error {
+			l.Info("http server shutting down")
+			ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+			defer cancel()
+			return srv.Shutdown(ctx)
+		},
+	})
+}
+

@@ -1,0 +1,27 @@
+package middleware
+
+import (
+	"github.com/gin-gonic/gin"
+	"github.com/unrolled/secure"
+)
+
+// Security applies HSTS, CSP, X-Frame-Options, X-Content-Type-Options,
+// Referrer-Policy with hardcoded sane defaults.
+func Security() gin.HandlerFunc {
+	s := secure.New(secure.Options{
+		STSSeconds:            31536000,
+		STSIncludeSubdomains:  true,
+		FrameDeny:             true,
+		ContentTypeNosniff:    true,
+		BrowserXssFilter:      false,
+		ContentSecurityPolicy: "default-src 'self'",
+		ReferrerPolicy:        "strict-origin-when-cross-origin",
+	})
+	return func(c *gin.Context) {
+		if err := s.Process(c.Writer, c.Request); err != nil {
+			c.Abort()
+			return
+		}
+		c.Next()
+	}
+}

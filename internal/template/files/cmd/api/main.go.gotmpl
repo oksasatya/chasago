@@ -1,0 +1,31 @@
+package main
+
+import (
+	"time"
+
+	"go.uber.org/fx"
+
+	"{{ .ModulePath }}/internal/admin"
+	"{{ .ModulePath }}/internal/config"
+	"{{ .ModulePath }}/internal/migrate"
+	"{{ .ModulePath }}/internal/module"
+	"{{ .ModulePath }}/internal/router"
+	"{{ .ModulePath }}/internal/seeder"
+)
+
+func main() {
+	cfg := config.MustLoad()
+
+	if loc, err := time.LoadLocation(cfg.App.Timezone); err == nil {
+		time.Local = loc
+	}
+
+	fx.New(
+		module.All(cfg),
+		fx.Invoke(migrate.AutoUp),
+		fx.Invoke(seeder.AutoRun),
+		fx.Invoke(admin.Ensure),
+		fx.Invoke(router.Register),
+		fx.WithLogger(module.FxZapLogger),
+	).Run()
+}

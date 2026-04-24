@@ -1,0 +1,32 @@
+### Go template
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Coverage
+*.out
+coverage.*
+
+# Go workspace
+go.work
+go.work.sum
+
+# env
+.env
+.env.*.local
+
+# Build outputs
+/bin/
+/dist/
+
+# macOS
+.DS_Store
+
+# Node (autoskills tooling)
+node_modules/

@@ -1,0 +1,11 @@
+package module
+
+import (
+	"go.uber.org/fx"
+
+	"{{ .ModulePath }}/internal/mailer"
+)
+
+var Mailer = fx.Module("mailer",
+	fx.Provide(mailer.NewSMTP),
+)

@@ -1,0 +1,29 @@
+package model
+
+import (
+	"time"
+
+	"github.com/google/uuid"
+)
+
+type UserStatus string
+
+const (
+	StatusActive              UserStatus = "active"
+	StatusInactive            UserStatus = "inactive"
+	StatusSuspended           UserStatus = "suspended"
+	StatusPendingVerification UserStatus = "pending_verification"
+)
+
+type User struct {
+	ID           uuid.UUID  `db:"id"`
+	Email        string     `db:"email"`
+	PasswordHash string     `db:"password_hash"`
+	Name         string     `db:"name"`
+	Role         string     `db:"role"`
+	Status       UserStatus `db:"status"`
+	Locale       string     `db:"locale"`
+	CreatedAt    time.Time  `db:"created_at"`
+	UpdatedAt    time.Time  `db:"updated_at"`
+	DeletedAt    *time.Time `db:"deleted_at"`
+}

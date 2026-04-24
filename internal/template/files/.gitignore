@@ -1,0 +1,30 @@
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+coverage.*
+go.work
+go.work.sum
+
+# env
+.env
+.env.*.local
+
+# build
+/bin/
+/dist/
+/tmp/
+
+# logs (generated at runtime)
+/logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+/.idea/
+/.vscode/

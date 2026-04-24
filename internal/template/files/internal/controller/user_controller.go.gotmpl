@@ -1,0 +1,60 @@
+package controller
+
+import (
+	"github.com/gin-gonic/gin"
+
+	"{{ .ModulePath }}/internal/apperror"
+	"{{ .ModulePath }}/internal/ctxkey"
+	"{{ .ModulePath }}/internal/dto/request"
+	"{{ .ModulePath }}/internal/mapper"
+	"{{ .ModulePath }}/internal/response"
+	"{{ .ModulePath }}/internal/service"
+	"{{ .ModulePath }}/internal/validator"
+)
+
+type UserController struct {
+	svc *service.UserService
+	v   *validator.Validator
+}
+
+func NewUserController(svc *service.UserService, v *validator.Validator) *UserController {
+	return &UserController{svc: svc, v: v}
+}
+
+// Me returns the authenticated user's profile.
+func (h *UserController) Me(c *gin.Context) {
+	id := ctxkey.UserID(c.Request.Context())
+	if id == "" {
+		response.Error(c, apperror.Unauthorized(apperror.CodeAuthUnauthenticated))
+		return
+	}
+	u, err := h.svc.Get(c.Request.Context(), id)
+	if err != nil {
+		response.Error(c, err)
+		return
+	}
+	response.OK(c, "user", mapper.ToUserResponse(u))
+}
+
+func (h *UserController) ChangePassword(c *gin.Context) {
+	id := ctxkey.UserID(c.Request.Context())
+	if id == "" {
+		response.Error(c, apperror.Unauthorized(apperror.CodeAuthUnauthenticated))
+		return
+	}
+
+	var req request.ChangePassword
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, apperror.BadRequest(apperror.CodeBadRequest).WithCause(err))
+		return
+	}
+	if err := h.v.Struct(req); err != nil {
+		response.Error(c, err)
+		return
+	}
+	if err := h.svc.ChangePassword(c.Request.Context(), id, req.OldPassword, req.NewPassword); err != nil {
+		response.Error(c, err)
+		return
+	}
+	response.OK(c, "result", gin.H{"changed": true})
+}

@@ -1,0 +1,60 @@
+package ctxkey
+
+import (
+	"context"
+
+	"go.uber.org/zap"
+)
+
+type ctxKey int
+
+const (
+	requestIDKey ctxKey = iota
+	userIDKey
+	userRoleKey
+	loggerKey
+)
+
+func WithRequestID(ctx context.Context, id string) context.Context {
+	return context.WithValue(ctx, requestIDKey, id)
+}
+
+func RequestID(ctx context.Context) string {
+	if v, ok := ctx.Value(requestIDKey).(string); ok {
+		return v
+	}
+	return ""
+}
+
+func WithUserID(ctx context.Context, id string) context.Context {
+	return context.WithValue(ctx, userIDKey, id)
+}
+
+func UserID(ctx context.Context) string {
+	if v, ok := ctx.Value(userIDKey).(string); ok {
+		return v
+	}
+	return ""
+}
+
+func WithUserRole(ctx context.Context, role string) context.Context {
+	return context.WithValue(ctx, userRoleKey, role)
+}
+
+func UserRole(ctx context.Context) string {
+	if v, ok := ctx.Value(userRoleKey).(string); ok {
+		return v
+	}
+	return ""
+}
+
+func WithLogger(ctx context.Context, l *zap.Logger) context.Context {
+	return context.WithValue(ctx, loggerKey, l)
+}
+
+func Logger(ctx context.Context) *zap.Logger {
+	if v, ok := ctx.Value(loggerKey).(*zap.Logger); ok && v != nil {
+		return v
+	}
+	return zap.NewNop()
+}

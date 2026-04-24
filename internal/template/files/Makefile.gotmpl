@@ -1,0 +1,93 @@
+.DEFAULT_GOAL := help
+SHELL := /usr/bin/env bash
+-include .env
+export
+
+APP      ?= {{ .AppName }}
+BIN      ?= ./bin/$(APP)
+MAIN     ?= ./cmd/api
+DB_URL   ?= postgres://$(DB_USER):$(DB_PASSWORD)@$(DB_HOST):$(DB_PORT)/$(DB_NAME)?sslmode=$(DB_SSLMODE)
+MIGRATIONS ?= ./internal/migrate/migrations
+
+## help: show this help
+help:
+	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  \033[36m%-22s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+
+## tools: install dev tools (migrate, air)
+tools:
+	@echo "Installing tools..."
+	@go install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@latest
+	@go install github.com/air-verse/air@latest
+
+## init-env: copy .env.example -> .env if not exist
+init-env:
+	@[ -f .env ] && echo "✓ .env already exists" || (cp .env.example .env && echo "✓ created .env from .env.example")
+
+## env-check: verify .env has all keys from .env.example
+env-check:
+	@diff <(grep -oE '^[A-Z_]+=' .env.example | sort) <(grep -oE '^[A-Z_]+=' .env | sort) \
+		&& echo "✓ .env has all required keys" \
+		|| (echo "✗ key mismatch" && exit 1)
+
+## dev: live-reload dev server via air
+dev:
+	@air
+
+## run: go run directly (no live reload)
+run:
+	@go run $(MAIN)
+
+## build: compile release binary
+build:
+	@mkdir -p bin
+	@go build -o $(BIN) $(MAIN)
+	@echo "✓ built $(BIN)"
+
+## test: run tests with race detector + coverage
+test:
+	@go test ./... -race -cover
+
+## lint: golangci-lint
+lint:
+	@golangci-lint run
+
+## migrate-up: apply pending migrations
+migrate-up:
+	@migrate -path $(MIGRATIONS) -database "$(DB_URL)" up
+
+## migrate-down: rollback 1 migration
+migrate-down:
+	@migrate -path $(MIGRATIONS) -database "$(DB_URL)" down 1
+
+## migrate-force: force set version (recover from dirty). Usage: make migrate-force v=N
+migrate-force:
+	@migrate -path $(MIGRATIONS) -database "$(DB_URL)" force $(v)
+
+## migrate-version: show current migration version
+migrate-version:
+	@migrate -path $(MIGRATIONS) -database "$(DB_URL)" version
+
+## migrate-create: create new migration. Usage: make migrate-create name=<snake_case>
+migrate-create:
+	@migrate create -ext sql -dir $(MIGRATIONS) -seq $(name)
+
+## db-reset: drop schema, recreate, apply migrations, seed
+db-reset:
+	@PGPASSWORD=$(DB_PASSWORD) psql -h $(DB_HOST) -p $(DB_PORT) -U $(DB_USER) -d $(DB_NAME) \
+		-c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
+	@$(MAKE) migrate-up
+	@echo "✓ db reset. Server will auto-seed on next start."
+
+## docker-up: start postgres + redis via docker-compose
+docker-up:
+	@docker compose up -d postgres redis
+
+## docker-down: stop compose stack
+docker-down:
+	@docker compose down
+
+## docker-build: build app image
+docker-build:
+	@docker build -t $(APP):latest .
+
+.PHONY: help tools init-env env-check dev run build test lint migrate-up migrate-down migrate-force migrate-version migrate-create db-reset docker-up docker-down docker-build

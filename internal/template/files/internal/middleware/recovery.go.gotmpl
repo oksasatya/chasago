@@ -1,0 +1,30 @@
+package middleware
+
+import (
+	"fmt"
+	"runtime/debug"
+
+	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
+
+	"{{ .ModulePath }}/internal/apperror"
+	"{{ .ModulePath }}/internal/ctxkey"
+	"{{ .ModulePath }}/internal/response"
+)
+
+// Recovery catches panics, logs with stack trace, and responds with 500 INTERNAL_ERROR.
+func Recovery() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		defer func() {
+			if r := recover(); r != nil {
+				l := ctxkey.Logger(c.Request.Context())
+				l.Error("panic recovered",
+					zap.Any("panic", r),
+					zap.ByteString("stack", debug.Stack()),
+				)
+				response.Error(c, apperror.Internal(fmt.Errorf("panic: %v", r)))
+			}
+		}()
+		c.Next()
+	}
+}

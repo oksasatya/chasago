@@ -1,0 +1,33 @@
+package seeder
+
+import (
+	"context"
+
+	"github.com/jmoiron/sqlx"
+	"go.uber.org/fx"
+	"go.uber.org/zap"
+
+	"{{ .ModulePath }}/internal/config"
+)
+
+// AutoRun executes SeedAll at app start when AUTO_SEED=true.
+// Seeders MUST be idempotent (UPSERT-style).
+func AutoRun(lc fx.Lifecycle, db *sqlx.DB, cfg *config.Config, l *zap.Logger) {
+	lc.Append(fx.Hook{
+		OnStart: func(ctx context.Context) error {
+			if !cfg.Seeder.AutoSeed {
+				l.Info("auto seed disabled")
+				return nil
+			}
+			return SeedAll(ctx, db, l)
+		},
+	})
+}
+
+func SeedAll(ctx context.Context, db *sqlx.DB, l *zap.Logger) error {
+	if err := seedRoles(ctx, db); err != nil {
+		return err
+	}
+	l.Info("seeder done")
+	return nil
+}

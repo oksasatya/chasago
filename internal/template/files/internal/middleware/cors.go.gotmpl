@@ -1,0 +1,27 @@
+package middleware
+
+import (
+	"time"
+
+	"github.com/gin-contrib/cors"
+	"github.com/gin-gonic/gin"
+
+	"{{ .ModulePath }}/internal/config"
+	"{{ .ModulePath }}/internal/constant"
+)
+
+func CORS(cfg *config.Config) gin.HandlerFunc {
+	return cors.New(cors.Config{
+		AllowOrigins: cfg.Security.OriginList(),
+		AllowMethods: []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
+		AllowHeaders: []string{
+			constant.HeaderAuthorization,
+			constant.HeaderContentType,
+			constant.HeaderRequestID,
+			constant.HeaderAcceptLanguage,
+		},
+		ExposeHeaders:    []string{constant.HeaderRequestID},
+		AllowCredentials: cfg.Security.CORSAllowCredentials,
+		MaxAge:           time.Duration(cfg.Security.CORSMaxAge) * time.Second,
+	})
+}

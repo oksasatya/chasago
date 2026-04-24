@@ -1,0 +1,14 @@
+package module
+
+import (
+	"go.uber.org/fx"
+
+	"{{ .ModulePath }}/internal/service"
+)
+
+var Service = fx.Module("service",
+	fx.Provide(
+		service.NewUserService,
+		service.NewAuthService,
+	),
+)

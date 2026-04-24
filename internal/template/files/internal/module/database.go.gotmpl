@@ -1,0 +1,25 @@
+package module
+
+import (
+	"context"
+
+	"github.com/jmoiron/sqlx"
+	"go.uber.org/fx"
+	"go.uber.org/zap"
+
+	"{{ .ModulePath }}/internal/database"
+)
+
+var Database = fx.Module("database",
+	fx.Provide(database.NewPostgres),
+	fx.Invoke(registerDBLifecycle),
+)
+
+func registerDBLifecycle(lc fx.Lifecycle, db *sqlx.DB, l *zap.Logger) {
+	lc.Append(fx.Hook{
+		OnStop: func(_ context.Context) error {
+			l.Info("closing database")
+			return db.Close()
+		},
+	})
+}

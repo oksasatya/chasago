@@ -1,0 +1,78 @@
+package response
+
+import (
+	"net/http"
+	"time"
+
+	"github.com/gin-gonic/gin"
+
+	"{{ .ModulePath }}/internal/apperror"
+	"{{ .ModulePath }}/internal/ctxkey"
+	"{{ .ModulePath }}/internal/pagination"
+)
+
+type meta struct {
+	RequestID  string           `json:"request_id,omitempty"`
+	Timestamp  string           `json:"timestamp"`
+	Pagination *pagination.Meta `json:"pagination,omitempty"`
+}
+
+type envelope struct {
+	Meta  meta   `json:"meta"`
+	Data  any    `json:"data,omitempty"`
+	Error *errBody `json:"error,omitempty"`
+}
+
+type errBody struct {
+	Code    int                   `json:"code"`
+	Message string                `json:"message"`
+	Details []apperror.FieldError `json:"details,omitempty"`
+}
+
+// OK writes {meta, data: {resource: data}}.
+func OK(c *gin.Context, resource string, data any) {
+	c.JSON(http.StatusOK, envelope{
+		Meta: buildMeta(c, nil),
+		Data: gin.H{resource: data},
+	})
+}
+
+// Created is OK but with 201 status.
+func Created(c *gin.Context, resource string, data any) {
+	c.JSON(http.StatusCreated, envelope{
+		Meta: buildMeta(c, nil),
+		Data: gin.H{resource: data},
+	})
+}
+
+// NoContent sends 204 with empty body.
+func NoContent(c *gin.Context) { c.Status(http.StatusNoContent) }
+
+// Paginated writes list response with pagination meta.
+func Paginated(c *gin.Context, resource string, items any, p pagination.Meta) {
+	c.JSON(http.StatusOK, envelope{
+		Meta: buildMeta(c, &p),
+		Data: gin.H{resource: items},
+	})
+}
+
+// Error writes error response. Detects *apperror.AppError, fallback 500.
+func Error(c *gin.Context, err error) {
+	ae := apperror.From(err)
+	c.AbortWithStatusJSON(ae.Code, envelope{
+		Meta: buildMeta(c, nil),
+		Error: &errBody{
+			Code:    ae.Code,
+			Message: ae.Message,
+			Details: ae.Details,
+		},
+	})
+}
+
+func buildMeta(c *gin.Context, p *pagination.Meta) meta {
+	return meta{
+		RequestID:  ctxkey.RequestID(c.Request.Context()),
+		Timestamp:  time.Now().Format(time.RFC3339),
+		Pagination: p,
+	}
+}

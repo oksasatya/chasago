@@ -1,0 +1,72 @@
+package apperror
+
+import (
+	"errors"
+	"fmt"
+	"net/http"
+)
+
+// FieldError describes a per-field validation issue.
+type FieldError struct {
+	Field   string            `json:"field"`
+	Message string            `json:"message"`
+	Params  map[string]any    `json:"params,omitempty"`
+}
+
+// AppError carries an HTTP status + semantic code + optional per-field details.
+// Message is the semantic code (e.g. "VALIDATION_REQUIRED"), not human-readable text.
+type AppError struct {
+	Code    int          `json:"code"`
+	Message string       `json:"message"`
+	Details []FieldError `json:"details,omitempty"`
+	cause   error
+}
+
+func (e *AppError) Error() string {
+	if e.cause != nil {
+		return fmt.Sprintf("%d %s: %v", e.Code, e.Message, e.cause)
+	}
+	return fmt.Sprintf("%d %s", e.Code, e.Message)
+}
+
+func (e *AppError) Unwrap() error { return e.cause }
+
+func (e *AppError) WithCause(err error) *AppError {
+	e.cause = err
+	return e
+}
+
+func (e *AppError) WithDetails(d ...FieldError) *AppError {
+	e.Details = append(e.Details, d...)
+	return e
+}
+
+// New builds an AppError.
+func New(httpStatus int, code string) *AppError {
+	return &AppError{Code: httpStatus, Message: code}
+}
+
+// From extracts an *AppError from err chain, or wraps as 500 INTERNAL_ERROR.
+func From(err error) *AppError {
+	if err == nil {
+		return nil
+	}
+	var app *AppError
+	if errors.As(err, &app) {
+		return app
+	}
+	return New(http.StatusInternalServerError, CodeInternalError).WithCause(err)
+}
+
+// Convenience constructors.
+func BadRequest(code string) *AppError    { return New(http.StatusBadRequest, code) }
+func Unauthorized(code string) *AppError  { return New(http.StatusUnauthorized, code) }
+func Forbidden(code string) *AppError     { return New(http.StatusForbidden, code) }
+func NotFound(code string) *AppError      { return New(http.StatusNotFound, code) }
+func Conflict(code string) *AppError      { return New(http.StatusConflict, code) }
+func TooManyRequests(code string) *AppError {
+	return New(http.StatusTooManyRequests, code)
+}
+func Internal(cause error) *AppError {
+	return New(http.StatusInternalServerError, CodeInternalError).WithCause(cause)
+}

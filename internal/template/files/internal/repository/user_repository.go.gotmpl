@@ -1,0 +1,96 @@
+package repository
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+
+	"github.com/google/uuid"
+	"github.com/jmoiron/sqlx"
+
+	"{{ .ModulePath }}/internal/model"
+)
+
+type UserRepository struct {
+	db *sqlx.DB
+}
+
+func NewUserRepository(db *sqlx.DB) *UserRepository {
+	return &UserRepository{db: db}
+}
+
+const userColumns = "id, email, password_hash, name, role, status, locale, created_at, updated_at, deleted_at"
+
+// FindByID returns nil user when not found (so callers choose how to respond).
+func (r *UserRepository) FindByID(ctx context.Context, id uuid.UUID) (*model.User, error) {
+	var u model.User
+	err := r.db.GetContext(ctx, &u,
+		`SELECT `+userColumns+` FROM users WHERE id = $1 AND deleted_at IS NULL`,
+		id,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &u, nil
+}
+
+func (r *UserRepository) FindByEmail(ctx context.Context, email string) (*model.User, error) {
+	var u model.User
+	err := r.db.GetContext(ctx, &u,
+		`SELECT `+userColumns+` FROM users WHERE email = $1 AND deleted_at IS NULL`,
+		email,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &u, nil
+}
+
+// ExistsByRole tells whether a user with the given role exists (used by ensure-admin).
+func (r *UserRepository) ExistsByRole(ctx context.Context, role string) (bool, error) {
+	var ok bool
+	err := r.db.GetContext(ctx, &ok,
+		`SELECT EXISTS(SELECT 1 FROM users WHERE role = $1 AND deleted_at IS NULL)`,
+		role,
+	)
+	return ok, err
+}
+
+// Create inserts and fills generated fields back into u.
+func (r *UserRepository) Create(ctx context.Context, u *model.User) error {
+	if u.ID == uuid.Nil {
+		id, err := uuid.NewV7()
+		if err != nil {
+			return err
+		}
+		u.ID = id
+	}
+	_, err := r.db.ExecContext(ctx,
+		`INSERT INTO users (id, email, password_hash, name, role, status, locale)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		u.ID, u.Email, u.PasswordHash, u.Name, u.Role, u.Status, u.Locale,
+	)
+	return err
+}
+
+func (r *UserRepository) UpdatePassword(ctx context.Context, id uuid.UUID, hash string) error {
+	_, err := r.db.ExecContext(ctx,
+		`UPDATE users SET password_hash = $2 WHERE id = $1 AND deleted_at IS NULL`,
+		id, hash,
+	)
+	return err
+}
+
+func (r *UserRepository) UpdateLocale(ctx context.Context, id uuid.UUID, locale string) error {
+	_, err := r.db.ExecContext(ctx,
+		`UPDATE users SET locale = $2 WHERE id = $1 AND deleted_at IS NULL`,
+		id, locale,
+	)
+	return err
+}

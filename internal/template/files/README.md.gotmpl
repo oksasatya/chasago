@@ -1,0 +1,105 @@
+# {{ .AppName }}
+
+Go REST API boilerplate. Clean architecture, Gin, uber-fx, sqlx/pgx, Paseto,
+Redis, golang-migrate.
+
+## Quick start
+
+```bash
+make init-env                    # copy .env.example -> .env
+# edit .env (DB_PASSWORD, SMTP_*, FRONTEND_URL, dll)
+docker compose up -d postgres redis
+make tools                       # install air + migrate CLI
+make dev                         # live-reload server di :8080
+```
+
+Default super-admin (hardcoded di `internal/admin/ensure.go`, ganti setelah login):
+
+- email: `admin@local`
+- password: `Admin@123`
+
+## Arsitektur
+
+```
+cmd/api/main.go          →  fx.New(module.All, fx.Invoke(migrate, seed, admin, router)).Run()
+internal/
+  model/                 →  domain entity (User, Role)
+  repository/            →  SEMUA SQL di sini
+  service/               →  SEMUA business logic
+  controller/            →  TIPIS: bind → validate → call service → respond
+  dto/{request,response}
+  mapper/                →  konversi model ↔ DTO (per-domain)
+  middleware/            →  request_id, logger, recovery, cors, security, auth, rate_limit
+  router/                →  mount routes + middleware global
+  module/                →  fx.Module per concern
+  token/                 →  Paseto v4 local
+  apperror/              →  AppError{Code int, Message string, Details} + semantic codes
+  response/              →  envelope {meta, data/error}
+  validator/             →  validator v10 + custom rules
+  logger/                →  zap + lumberjack
+  mailer/                →  SMTP + i18n (hanya email yang multi-bahasa)
+  cache/                 →  redis helpers + key prefixes
+  audit/                 →  action const + Logger
+  constant/              →  pagination, bcrypt, header
+  ctxkey/                →  type-safe context keys
+  admin/                 →  ensure super-admin (idempotent)
+  migrate/               →  golang-migrate embedded, auto-run
+  seeder/                →  idempotent (UPSERT)
+```
+
+## Aturan kerja
+
+- Controller **tipis**: bind → validate → service → response.
+- Service **satu-satunya tempat business logic**. Transaksi juga di sini.
+- Repository **satu-satunya tempat SQL**.
+- Mapper dipisah per-domain: `user_mapper.go`, `order_mapper.go`, dst.
+- Error via `apperror.AppError` — frontend pakai `error.message` sebagai i18n key.
+
+## Response envelope
+
+Sukses:
+```json
+{
+  "meta": { "request_id": "...", "timestamp": "..." },
+  "data": { "user": { "id": "...", "email": "..." } }
+}
+```
+
+Error:
+```json
+{
+  "meta": { "request_id": "...", "timestamp": "..." },
+  "error": {
+    "code": 400,
+    "message": "VALIDATION_REQUIRED",
+    "details": [{ "field": "email", "message": "VALIDATION_REQUIRED" }]
+  }
+}
+```
+
+## Migrations
+
+- **Selalu bikin migrasi baru** — jangan edit yang sudah di-push.
+- `make migrate-create name=add_orders_table`
+- Auto-run saat `make run`/`make dev` (fx lifecycle).
+- Manual: `make migrate-up / migrate-down / migrate-force v=N / migrate-version`.
+- Dev reset: `make db-reset` (drop schema → fresh migrate → seed).
+
+## Seeder
+
+- Idempotent via `INSERT ... ON CONFLICT ... DO UPDATE WHERE data_changed`.
+- Auto-run kalau `AUTO_SEED=true` di `.env`.
+
+## Endpoints default
+
+```
+POST  /api/auth/register
+POST  /api/auth/login                      → { access_token, refresh_token, expires_in }
+POST  /api/auth/refresh                    → rotate pair
+POST  /api/auth/logout           (auth)    → blacklist access token
+POST  /api/auth/forgot-password
+POST  /api/auth/reset-password
+GET   /api/me                    (auth)
+PATCH /api/me/password           (auth)
+GET   /healthz
+```

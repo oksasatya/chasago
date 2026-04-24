@@ -1,0 +1,97 @@
+package mailer
+
+import (
+	"bytes"
+	"context"
+	"embed"
+	"fmt"
+	"html/template"
+
+	"github.com/nicksnyder/go-i18n/v2/i18n"
+	"github.com/wneessen/go-mail"
+
+	"{{ .ModulePath }}/internal/config"
+)
+
+//go:embed templates
+var templatesFS embed.FS
+
+// SMTP mailer. Resolves HTML body + localized subject from embedded bundles.
+type SMTP struct {
+	cfg    *config.Config
+	bundle *i18n.Bundle
+	tmpl   *template.Template
+}
+
+// NewSMTP returns a Mailer. Exposed as Mailer interface via fx.Provide.
+func NewSMTP(cfg *config.Config) (Mailer, error) {
+	tmpl, err := template.ParseFS(templatesFS, "templates/*.html.tmpl")
+	if err != nil {
+		return nil, fmt.Errorf("parse email templates: %w", err)
+	}
+	return &SMTP{
+		cfg:    cfg,
+		bundle: newBundle(),
+		tmpl:   tmpl,
+	}, nil
+}
+
+func (s *SMTP) Send(ctx context.Context, m Message) error {
+	loc := localizer(s.bundle, m.Lang)
+
+	subject, _ := loc.Localize(&i18n.LocalizeConfig{
+		MessageID:    m.Template + ".subject",
+		TemplateData: m.Data,
+	})
+	if subject == "" {
+		subject = m.Template
+	}
+
+	body, err := s.renderBody(m, loc)
+	if err != nil {
+		return err
+	}
+
+	msg := mail.NewMsg()
+	if err := msg.From(s.cfg.SMTP.From); err != nil {
+		return err
+	}
+	if err := msg.To(m.To); err != nil {
+		return err
+	}
+	msg.Subject(subject)
+	msg.SetBodyString(mail.TypeTextHTML, body)
+
+	client, err := mail.NewClient(
+		s.cfg.SMTP.Host,
+		mail.WithPort(s.cfg.SMTP.Port),
+		mail.WithSMTPAuth(mail.SMTPAuthPlain),
+		mail.WithUsername(s.cfg.SMTP.User),
+		mail.WithPassword(s.cfg.SMTP.Password),
+	)
+	if err != nil {
+		return err
+	}
+	return client.DialAndSendWithContext(ctx, msg)
+}
+
+func (s *SMTP) renderBody(m Message, loc *i18n.Localizer) (string, error) {
+	localized, _ := loc.Localize(&i18n.LocalizeConfig{
+		MessageID:    m.Template + ".body",
+		TemplateData: m.Data,
+	})
+
+	data := map[string]any{
+		"AppName":   s.cfg.App.Name,
+		"Localized": localized,
+	}
+	for k, v := range m.Data {
+		data[k] = v
+	}
+
+	var buf bytes.Buffer
+	if err := s.tmpl.ExecuteTemplate(&buf, m.Template+".html.tmpl", data); err != nil {
+		return "", fmt.Errorf("render %s: %w", m.Template, err)
+	}
+	return buf.String(), nil
+}

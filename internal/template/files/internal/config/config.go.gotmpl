@@ -1,0 +1,192 @@
+package config
+
+import (
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/spf13/viper"
+)
+
+type Config struct {
+	App      App
+	DB       DB
+	Redis    Redis
+	Paseto   Paseto
+	SMTP     SMTP
+	Log      Log
+	Security Security
+	Limit    Limit
+	Lockout  Lockout
+	Seeder   Seeder
+}
+
+type App struct {
+	Name     string `mapstructure:"APP_NAME"`
+	Env      string `mapstructure:"APP_ENV"`
+	Port     int    `mapstructure:"APP_PORT"`
+	Timezone string `mapstructure:"APP_TIMEZONE"`
+}
+
+type DB struct {
+	Host         string `mapstructure:"DB_HOST"`
+	Port         int    `mapstructure:"DB_PORT"`
+	User         string `mapstructure:"DB_USER"`
+	Password     string `mapstructure:"DB_PASSWORD"`
+	Name         string `mapstructure:"DB_NAME"`
+	SSLMode      string `mapstructure:"DB_SSLMODE"`
+	MaxOpenConns int    `mapstructure:"DB_MAX_OPEN_CONNS"`
+	MaxIdleConns int    `mapstructure:"DB_MAX_IDLE_CONNS"`
+}
+
+func (d DB) DSN() string {
+	return fmt.Sprintf(
+		"postgres://%s:%s@%s:%d/%s?sslmode=%s",
+		d.User, d.Password, d.Host, d.Port, d.Name, d.SSLMode,
+	)
+}
+
+type Redis struct {
+	Addr     string `mapstructure:"REDIS_ADDR"`
+	Password string `mapstructure:"REDIS_PASSWORD"`
+	DB       int    `mapstructure:"REDIS_DB"`
+}
+
+type Paseto struct {
+	SymmetricKey    string        `mapstructure:"PASETO_SYMMETRIC_KEY"`
+	AccessTokenTTL  time.Duration `mapstructure:"ACCESS_TOKEN_TTL"`
+	RefreshTokenTTL time.Duration `mapstructure:"REFRESH_TOKEN_TTL"`
+}
+
+type SMTP struct {
+	Host     string `mapstructure:"SMTP_HOST"`
+	Port     int    `mapstructure:"SMTP_PORT"`
+	User     string `mapstructure:"SMTP_USER"`
+	Password string `mapstructure:"SMTP_PASSWORD"`
+	From     string `mapstructure:"SMTP_FROM"`
+}
+
+type Log struct {
+	Level        string `mapstructure:"LOG_LEVEL"`
+	File         string `mapstructure:"LOG_FILE"`
+	MaxSizeMB    int    `mapstructure:"LOG_MAX_SIZE_MB"`
+	MaxBackups   int    `mapstructure:"LOG_MAX_BACKUPS"`
+	MaxAgeDays   int    `mapstructure:"LOG_MAX_AGE_DAYS"`
+}
+
+type Security struct {
+	FrontendURL          string `mapstructure:"FRONTEND_URL"`
+	AllowedOrigins       string `mapstructure:"ALLOWED_ORIGINS"`
+	CORSAllowCredentials bool   `mapstructure:"CORS_ALLOW_CREDENTIALS"`
+	CORSMaxAge           int    `mapstructure:"CORS_MAX_AGE"`
+	RateLimitRPS         int    `mapstructure:"RATE_LIMIT_RPS"`
+	RateLimitBurst       int    `mapstructure:"RATE_LIMIT_BURST"`
+	AuthRateLimitRPM     int    `mapstructure:"AUTH_RATE_LIMIT_RPM"`
+}
+
+func (s Security) OriginList() []string {
+	parts := strings.Split(s.AllowedOrigins, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+type Limit struct {
+	RequestTimeout   time.Duration `mapstructure:"REQUEST_TIMEOUT"`
+	MaxBodySizeBytes int64         `mapstructure:"MAX_BODY_SIZE_BYTES"`
+}
+
+type Lockout struct {
+	MaxAttempts int           `mapstructure:"LOCKOUT_MAX_ATTEMPTS"`
+	Duration    time.Duration `mapstructure:"LOCKOUT_DURATION"`
+}
+
+type Seeder struct {
+	AutoSeed bool `mapstructure:"AUTO_SEED"`
+}
+
+func MustLoad() *Config {
+	cfg, err := Load()
+	if err != nil {
+		panic(fmt.Sprintf("load config: %v", err))
+	}
+	return cfg
+}
+
+func Load() (*Config, error) {
+	v := viper.New()
+	v.SetConfigFile(".env")
+	v.SetConfigType("env")
+	v.AutomaticEnv()
+	setDefaults(v)
+	_ = v.ReadInConfig()
+
+	cfg := &Config{}
+	if err := bind(v, cfg); err != nil {
+		return nil, err
+	}
+	return cfg, nil
+}
+
+func setDefaults(v *viper.Viper) {
+	v.SetDefault("APP_NAME", "{{ .AppName }}")
+	v.SetDefault("APP_ENV", "development")
+	v.SetDefault("APP_PORT", 8080)
+	v.SetDefault("APP_TIMEZONE", "{{ .Timezone }}")
+
+	v.SetDefault("DB_HOST", "localhost")
+	v.SetDefault("DB_PORT", 5432)
+	v.SetDefault("DB_USER", "postgres")
+	v.SetDefault("DB_PASSWORD", "postgres")
+	v.SetDefault("DB_NAME", "{{ .DBName }}")
+	v.SetDefault("DB_SSLMODE", "disable")
+	v.SetDefault("DB_MAX_OPEN_CONNS", 25)
+	v.SetDefault("DB_MAX_IDLE_CONNS", 5)
+
+	v.SetDefault("REDIS_ADDR", "localhost:6379")
+	v.SetDefault("REDIS_DB", 0)
+
+	v.SetDefault("ACCESS_TOKEN_TTL", "15m")
+	v.SetDefault("REFRESH_TOKEN_TTL", "168h")
+
+	v.SetDefault("SMTP_HOST", "smtp.mailtrap.io")
+	v.SetDefault("SMTP_PORT", 2525)
+	v.SetDefault("SMTP_FROM", "noreply@{{ .AppName }}.local")
+
+	v.SetDefault("LOG_LEVEL", "info")
+	v.SetDefault("LOG_FILE", "logs/app.log")
+	v.SetDefault("LOG_MAX_SIZE_MB", 50)
+	v.SetDefault("LOG_MAX_BACKUPS", 10)
+	v.SetDefault("LOG_MAX_AGE_DAYS", 30)
+
+	v.SetDefault("FRONTEND_URL", "http://localhost:3000")
+	v.SetDefault("ALLOWED_ORIGINS", "http://localhost:3000,http://localhost:5173")
+	v.SetDefault("CORS_ALLOW_CREDENTIALS", true)
+	v.SetDefault("CORS_MAX_AGE", 600)
+
+	v.SetDefault("RATE_LIMIT_RPS", 10)
+	v.SetDefault("RATE_LIMIT_BURST", 20)
+	v.SetDefault("AUTH_RATE_LIMIT_RPM", 5)
+
+	v.SetDefault("REQUEST_TIMEOUT", "30s")
+	v.SetDefault("MAX_BODY_SIZE_BYTES", 1048576)
+	v.SetDefault("LOCKOUT_MAX_ATTEMPTS", 5)
+	v.SetDefault("LOCKOUT_DURATION", "15m")
+
+	v.SetDefault("AUTO_SEED", true)
+}
+
+func bind(v *viper.Viper, cfg *Config) error {
+	groups := []any{&cfg.App, &cfg.DB, &cfg.Redis, &cfg.Paseto, &cfg.SMTP, &cfg.Log, &cfg.Security, &cfg.Limit, &cfg.Lockout, &cfg.Seeder}
+	for _, g := range groups {
+		if err := v.Unmarshal(g); err != nil {
+			return err
+		}
+	}
+	return nil
+}

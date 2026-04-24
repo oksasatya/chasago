@@ -1,0 +1,42 @@
+package mailer
+
+import (
+	"embed"
+	"strings"
+
+	"github.com/nicksnyder/go-i18n/v2/i18n"
+	"golang.org/x/text/language"
+	"gopkg.in/yaml.v3"
+)
+
+//go:embed locales
+var localesFS embed.FS
+
+// newBundle loads all YAML locale files embedded in the binary.
+func newBundle() *i18n.Bundle {
+	b := i18n.NewBundle(language.English)
+	b.RegisterUnmarshalFunc("yaml", yaml.Unmarshal)
+
+	entries, err := localesFS.ReadDir("locales")
+	if err != nil {
+		return b
+	}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".yaml") {
+			continue
+		}
+		data, err := localesFS.ReadFile("locales/" + e.Name())
+		if err != nil {
+			continue
+		}
+		_, _ = b.ParseMessageFileBytes(data, e.Name())
+	}
+	return b
+}
+
+func localizer(b *i18n.Bundle, lang string) *i18n.Localizer {
+	if lang == "" {
+		lang = "en"
+	}
+	return i18n.NewLocalizer(b, lang, "en")
+}

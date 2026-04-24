@@ -1,0 +1,64 @@
+package pagination
+
+import (
+	"strconv"
+
+	"github.com/gin-gonic/gin"
+
+	"{{ .ModulePath }}/internal/constant"
+)
+
+type Params struct {
+	Page    int `json:"page"`
+	PerPage int `json:"per_page"`
+}
+
+type Meta struct {
+	Page       int   `json:"page"`
+	PerPage    int   `json:"per_page"`
+	Total      int64 `json:"total"`
+	TotalPages int   `json:"total_pages"`
+}
+
+// FromQuery extracts ?page=&per_page= with defaults + clamping.
+func FromQuery(c *gin.Context) Params {
+	page := parseOr(c.Query("page"), constant.DefaultPage)
+	per := parseOr(c.Query("per_page"), constant.DefaultPerPage)
+	if page < 1 {
+		page = constant.DefaultPage
+	}
+	if per < 1 {
+		per = constant.DefaultPerPage
+	}
+	if per > constant.MaxPerPage {
+		per = constant.MaxPerPage
+	}
+	return Params{Page: page, PerPage: per}
+}
+
+func (p Params) Offset() int { return (p.Page - 1) * p.PerPage }
+func (p Params) Limit() int  { return p.PerPage }
+
+func BuildMeta(p Params, total int64) Meta {
+	tp := int(total) / p.PerPage
+	if int(total)%p.PerPage != 0 {
+		tp++
+	}
+	return Meta{
+		Page:       p.Page,
+		PerPage:    p.PerPage,
+		Total:      total,
+		TotalPages: tp,
+	}
+}
+
+func parseOr(s string, def int) int {
+	if s == "" {
+		return def
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil {
+		return def
+	}
+	return n
+}

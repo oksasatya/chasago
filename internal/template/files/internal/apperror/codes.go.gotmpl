@@ -1,0 +1,35 @@
+package apperror
+
+// Semantic error codes (SCREAMING_SNAKE_CASE). Frontend pakai sebagai i18n key.
+const (
+	// Generic
+	CodeInternalError = "INTERNAL_ERROR"
+	CodeNotFound      = "NOT_FOUND"
+	CodeForbidden     = "FORBIDDEN"
+	CodeConflict      = "CONFLICT"
+	CodeBadRequest    = "BAD_REQUEST"
+
+	// Validation
+	CodeValidationRequired      = "VALIDATION_REQUIRED"
+	CodeValidationEmailInvalid  = "VALIDATION_EMAIL_INVALID"
+	CodeValidationMinLength     = "VALIDATION_MIN_LENGTH"
+	CodeValidationMaxLength     = "VALIDATION_MAX_LENGTH"
+	CodeValidationPasswordWeak  = "VALIDATION_PASSWORD_WEAK"
+	CodeValidationInvalidFormat = "VALIDATION_INVALID_FORMAT"
+
+	// Auth
+	CodeAuthCredentialsInvalid = "AUTH_CREDENTIALS_INVALID"
+	CodeAuthTokenInvalid       = "AUTH_TOKEN_INVALID"
+	CodeAuthTokenExpired       = "AUTH_TOKEN_EXPIRED"
+	CodeAuthTokenBlacklisted   = "AUTH_TOKEN_BLACKLISTED"
+	CodeAuthAccountLocked      = "AUTH_ACCOUNT_LOCKED"
+	CodeAuthUnauthenticated    = "AUTH_UNAUTHENTICATED"
+	CodeAuthRefreshReused      = "AUTH_REFRESH_REUSED"
+
+	// User
+	CodeUserNotFound          = "USER_NOT_FOUND"
+	CodeUserEmailAlreadyExists = "USER_EMAIL_ALREADY_EXISTS"
+
+	// Rate limit
+	CodeRateLimitExceeded = "RATE_LIMIT_EXCEEDED"
+)

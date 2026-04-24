@@ -1,0 +1,55 @@
+package repository
+
+import (
+	"context"
+	"encoding/json"
+
+	"github.com/google/uuid"
+	"github.com/jmoiron/sqlx"
+)
+
+type AuditRepository struct {
+	db *sqlx.DB
+}
+
+func NewAuditRepository(db *sqlx.DB) *AuditRepository {
+	return &AuditRepository{db: db}
+}
+
+type AuditEntry struct {
+	UserID     *uuid.UUID
+	Action     string
+	Resource   string
+	ResourceID string
+	Metadata   map[string]any
+	IP         string
+	UserAgent  string
+}
+
+func (r *AuditRepository) Insert(ctx context.Context, e AuditEntry) error {
+	var metaJSON []byte
+	if len(e.Metadata) > 0 {
+		b, err := json.Marshal(e.Metadata)
+		if err != nil {
+			return err
+		}
+		metaJSON = b
+	}
+	id, err := uuid.NewV7()
+	if err != nil {
+		return err
+	}
+	_, err = r.db.ExecContext(ctx,
+		`INSERT INTO audit_logs (id, user_id, action, resource, resource_id, metadata, ip, user_agent)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+		id, e.UserID, e.Action, e.Resource, nullIfEmpty(e.ResourceID), metaJSON, nullIfEmpty(e.IP), nullIfEmpty(e.UserAgent),
+	)
+	return err
+}
+
+func nullIfEmpty(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
+}
