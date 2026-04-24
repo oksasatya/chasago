@@ -19,6 +19,11 @@ var (
 
 func String() string {
 	v, c, d := resolve()
+	// When installed via `go install url@version`, Go doesn't embed VCS info —
+	// only the module version is known. Skip the parenthetical in that case.
+	if c == "none" && d == "unknown" {
+		return v
+	}
 	return v + " (" + c + ", " + d + ")"
 }
 
