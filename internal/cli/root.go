@@ -5,7 +5,7 @@ import (
 
 	"github.com/oksasatya/chasago/internal/version"
 )
-
+ 
 func NewRoot() *cobra.Command {
 	root := &cobra.Command{
 		Use:   "chasago",
