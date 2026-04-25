@@ -65,6 +65,11 @@ func newInitCmd() *cobra.Command {
 				ans.Timezone = timezone
 			}
 
+			if strings.Contains(ans.ModulePath, "your-org") {
+				fmt.Fprintln(out, "⚠ module path masih placeholder ('your-org'). Pakai --module=github.com/<user>/<repo> atau set GITHUB_USERNAME / login `gh auth login`.")
+				return fmt.Errorf("module path placeholder ditolak: %s", ans.ModulePath)
+			}
+
 			if err := Generate(cwd, ans.ToContext(), out); err != nil {
 				return err
 			}
@@ -85,10 +90,10 @@ func newInitCmd() *cobra.Command {
 func defaultAnswers(cwd string) Answers {
 	app := strings.ToLower(filepath.Base(cwd))
 	return Answers{
-		ModulePath: "github.com/your-org/" + app,
+		ModulePath: defaultModulePath(app),
 		AppName:    app,
 		DBName:     strings.ReplaceAll(app, "-", "_"),
-		Timezone:   "Asia/Jakarta",
+		Timezone:   detectTimezone(),
 		Features: template.Features{
 			Register:       true,
 			Login:          true,

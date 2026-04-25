@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -10,6 +11,64 @@ import (
 
 	"github.com/oksasatya/chasago/internal/template"
 )
+
+// detectGithubUser tries gh CLI first, then env vars. Returns empty when no
+// reliable signal — caller should let the user fill manually instead of
+// guessing.
+func detectGithubUser() string {
+	if out, err := exec.Command("gh", "api", "user", "--jq", ".login").Output(); err == nil {
+		if u := strings.TrimSpace(string(out)); u != "" {
+			return u
+		}
+	}
+	for _, key := range []string{"GITHUB_USERNAME", "GITHUB_USER", "GH_USER"} {
+		if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// detectTimezone resolves the host timezone — $TZ first, then the symlink
+// at /etc/localtime (Linux/macOS), then a sane fallback.
+func detectTimezone() string {
+	if tz := strings.TrimSpace(os.Getenv("TZ")); tz != "" {
+		return tz
+	}
+	if dest, err := os.Readlink("/etc/localtime"); err == nil {
+		// e.g. /var/db/timezone/zoneinfo/Asia/Jakarta -> "Asia/Jakarta"
+		const marker = "/zoneinfo/"
+		if i := strings.Index(dest, marker); i != -1 {
+			if tz := dest[i+len(marker):]; tz != "" {
+				return tz
+			}
+		}
+	}
+	return "Asia/Jakarta"
+}
+
+// defaultModulePath builds a sensible module path default. Falls back to
+// the legacy `your-org` placeholder only when we can't detect anything.
+func defaultModulePath(appName string) string {
+	if user := detectGithubUser(); user != "" {
+		return "github.com/" + user + "/" + appName
+	}
+	return "github.com/your-org/" + appName
+}
+
+func modulePathValidator(s string) error {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return fmt.Errorf("module path tidak boleh kosong")
+	}
+	if strings.Contains(s, "your-org") {
+		return fmt.Errorf("ganti 'your-org' dengan username/organisasi GitHub kamu")
+	}
+	if !strings.Contains(s, "/") {
+		return fmt.Errorf("module path harus pakai format domain/owner/repo, mis. github.com/oksasatya/myapp")
+	}
+	return nil
+}
 
 type Answers struct {
 	ModulePath string
@@ -31,14 +90,14 @@ func (a Answers) ToContext() template.Context {
 
 func Ask(cwd string) (Answers, error) {
 	defaultApp := strings.ToLower(filepath.Base(cwd))
-	defaultModule := "github.com/your-org/" + defaultApp
+	defaultModule := defaultModulePath(defaultApp)
 	defaultDB := strings.ReplaceAll(defaultApp, "-", "_")
 
 	ans := Answers{
 		ModulePath: defaultModule,
 		AppName:    defaultApp,
 		DBName:     defaultDB,
-		Timezone:   "Asia/Jakarta",
+		Timezone:   detectTimezone(),
 		Features: template.Features{
 			Register:       true,
 			Login:          true,
@@ -60,9 +119,9 @@ func Ask(cwd string) (Answers, error) {
 		huh.NewGroup(
 			huh.NewInput().
 				Title("Go module path").
-				Description("Digunakan sebagai module di go.mod").
+				Description("Dipakai di go.mod & semua import. Contoh: github.com/oksasatya/myapp").
 				Value(&ans.ModulePath).
-				Validate(requiredValidator("module path")),
+				Validate(modulePathValidator),
 			huh.NewInput().
 				Title("App name").
 				Description("Dipakai di docker-compose, DB, logs").
