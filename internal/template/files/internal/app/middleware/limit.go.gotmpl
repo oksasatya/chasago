@@ -1,0 +1,22 @@
+package middleware
+
+import (
+	"context"
+	"net/http"
+
+	"github.com/gin-gonic/gin"
+
+	"{{ .ModulePath }}/internal/platform/config"
+)
+
+// Limit applies per-request timeout + max body size.
+func Limit(cfg *config.Config) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, cfg.Limit.MaxBodySizeBytes)
+
+		ctx, cancel := context.WithTimeout(c.Request.Context(), cfg.Limit.RequestTimeout)
+		defer cancel()
+		c.Request = c.Request.WithContext(ctx)
+		c.Next()
+	}
+}

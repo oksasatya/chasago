@@ -1,0 +1,18 @@
+package module
+
+import (
+	"go.uber.org/fx"
+	"go.uber.org/fx/fxevent"
+	"go.uber.org/zap"
+
+	"{{ .ModulePath }}/internal/platform/logger"
+)
+
+var Logger = fx.Module("logger",
+	fx.Provide(logger.New),
+)
+
+// FxZapLogger returns an fx event logger backed by zap.
+func FxZapLogger(l *zap.Logger) fxevent.Logger {
+	return &fxevent.ZapLogger{Logger: l.Named("fx")}
+}

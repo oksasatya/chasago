@@ -1,0 +1,105 @@
+package seeders
+
+import (
+	"context"
+
+	"github.com/google/uuid"
+	"github.com/jmoiron/sqlx"
+	"go.uber.org/zap"
+	"golang.org/x/crypto/bcrypt"
+
+	"{{ .ModulePath }}/internal/app/model"
+	"{{ .ModulePath }}/internal/pkg/constant"
+	"{{ .ModulePath }}/internal/database/factories"
+)
+
+// Default super-admin used by `make seed`. Change after first login.
+const (
+	defaultAdminEmail    = "admin@local"
+	defaultAdminPassword = "Admin@123"
+	defaultAdminName     = "Super Admin"
+
+	dummyUserCount = 50
+)
+
+// UserSeeder seeds one fixed super-admin (idempotent) plus a batch of
+// factory-generated users.
+type UserSeeder struct{}
+
+func (UserSeeder) Name() string { return "user" }
+
+func (UserSeeder) Run(ctx context.Context, db *sqlx.DB, l *zap.Logger) error {
+	if err := upsertAdmin(ctx, db); err != nil {
+		return err
+	}
+	l.Info("super-admin upserted",
+		zap.String("email", defaultAdminEmail),
+		zap.String("password", defaultAdminPassword),
+	)
+
+	users, err := factories.NewUser().Count(dummyUserCount).Make()
+	if err != nil {
+		return err
+	}
+	inserted := 0
+	for _, u := range users {
+		ok, err := insertUserIgnoreConflict(ctx, db, u)
+		if err != nil {
+			return err
+		}
+		if ok {
+			inserted++
+		}
+	}
+	l.Info("dummy users seeded",
+		zap.Int("requested", dummyUserCount),
+		zap.Int("inserted", inserted),
+		zap.Int("skipped_conflict", dummyUserCount-inserted),
+	)
+	return nil
+}
+
+func upsertAdmin(ctx context.Context, db *sqlx.DB) error {
+	hash, err := bcrypt.GenerateFromPassword([]byte(defaultAdminPassword), constant.BcryptCost)
+	if err != nil {
+		return err
+	}
+	const q = `
+        INSERT INTO users (id, email, password_hash, name, role, status, locale)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        ON CONFLICT (email) DO UPDATE SET
+            name   = EXCLUDED.name,
+            role   = EXCLUDED.role,
+            status = EXCLUDED.status`
+	_, err = db.ExecContext(ctx, q,
+		uuid.New(),
+		defaultAdminEmail,
+		string(hash),
+		defaultAdminName,
+		model.RoleAdmin,
+		model.StatusActive,
+		"en",
+	)
+	return err
+}
+
+// insertUserIgnoreConflict attempts to INSERT a user; on email conflict it
+// returns ok=false instead of failing — gofakeit collisions are rare but
+// possible across re-runs.
+func insertUserIgnoreConflict(ctx context.Context, db *sqlx.DB, u *model.User) (bool, error) {
+	const q = `
+        INSERT INTO users (id, email, password_hash, name, role, status, locale)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        ON CONFLICT (email) DO NOTHING`
+	res, err := db.ExecContext(ctx, q,
+		u.ID, u.Email, u.PasswordHash, u.Name, u.Role, u.Status, u.Locale,
+	)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}

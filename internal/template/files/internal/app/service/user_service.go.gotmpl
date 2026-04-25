@@ -1,0 +1,58 @@
+package service
+
+import (
+	"context"
+	"net/http"
+
+	"github.com/google/uuid"
+	"golang.org/x/crypto/bcrypt"
+
+	"{{ .ModulePath }}/internal/pkg/apperror"
+	"{{ .ModulePath }}/internal/pkg/audit"
+	"{{ .ModulePath }}/internal/pkg/constant"
+	"{{ .ModulePath }}/internal/app/model"
+	"{{ .ModulePath }}/internal/app/repository"
+)
+
+type UserService struct {
+	users *repository.UserRepository
+	audit *audit.Logger
+}
+
+func NewUserService(users *repository.UserRepository, a *audit.Logger) *UserService {
+	return &UserService{users: users, audit: a}
+}
+
+func (s *UserService) Get(ctx context.Context, id string) (*model.User, error) {
+	uid, err := uuid.Parse(id)
+	if err != nil {
+		return nil, apperror.New(http.StatusBadRequest, apperror.CodeBadRequest)
+	}
+	u, err := s.users.FindByID(ctx, uid)
+	if err != nil {
+		return nil, apperror.Internal(err)
+	}
+	if u == nil {
+		return nil, apperror.NotFound(apperror.CodeUserNotFound)
+	}
+	return u, nil
+}
+
+func (s *UserService) ChangePassword(ctx context.Context, id, oldPW, newPW string) error {
+	u, err := s.Get(ctx, id)
+	if err != nil {
+		return err
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte(oldPW)); err != nil {
+		return apperror.Unauthorized(apperror.CodeAuthCredentialsInvalid)
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(newPW), constant.BcryptCost)
+	if err != nil {
+		return apperror.Internal(err)
+	}
+	if err := s.users.UpdatePassword(ctx, u.ID, string(hash)); err != nil {
+		return apperror.Internal(err)
+	}
+	s.audit.Log(ctx, audit.ActionPasswordChanged, "user", u.ID.String(), nil)
+	return nil
+}

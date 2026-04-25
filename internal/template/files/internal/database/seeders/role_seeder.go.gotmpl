@@ -1,0 +1,47 @@
+package seeders
+
+import (
+	"context"
+
+	"github.com/jmoiron/sqlx"
+	"go.uber.org/zap"
+)
+
+// RoleSeeder seeds the `roles` lookup table. Safe to re-run — UPSERTs by
+// primary key (`name`).
+type RoleSeeder struct{}
+
+func (RoleSeeder) Name() string { return "role" }
+
+func (RoleSeeder) Run(ctx context.Context, db *sqlx.DB, l *zap.Logger) error {
+	const ddl = `
+        CREATE TABLE IF NOT EXISTS roles (
+            name        TEXT PRIMARY KEY,
+            description TEXT NOT NULL DEFAULT ''
+        )`
+	if _, err := db.ExecContext(ctx, ddl); err != nil {
+		return err
+	}
+
+	rows := []struct {
+		Name, Description string
+	}{
+		{"admin", "Full access"},
+		{"user", "Regular authenticated user"},
+		{"guest", "Unauthenticated or limited access"},
+	}
+
+	for _, r := range rows {
+		_, err := db.ExecContext(ctx,
+			`INSERT INTO roles (name, description) VALUES ($1, $2)
+			 ON CONFLICT (name) DO UPDATE SET description = EXCLUDED.description
+			 WHERE roles.description IS DISTINCT FROM EXCLUDED.description`,
+			r.Name, r.Description,
+		)
+		if err != nil {
+			return err
+		}
+	}
+	l.Info("roles seeded", zap.Int("count", len(rows)))
+	return nil
+}

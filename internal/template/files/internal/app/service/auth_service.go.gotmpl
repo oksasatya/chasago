@@ -1,0 +1,255 @@
+package service
+
+import (
+	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
+	"errors"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
+	"golang.org/x/crypto/bcrypt"
+
+	"{{ .ModulePath }}/internal/pkg/apperror"
+	"{{ .ModulePath }}/internal/pkg/audit"
+	"{{ .ModulePath }}/internal/pkg/cache"
+	"{{ .ModulePath }}/internal/platform/config"
+	"{{ .ModulePath }}/internal/pkg/constant"
+	"{{ .ModulePath }}/internal/pkg/ctxkey"
+	"{{ .ModulePath }}/internal/app/dto/request"
+	respdto "{{ .ModulePath }}/internal/app/dto/response"
+	"{{ .ModulePath }}/internal/platform/mailer"
+	"{{ .ModulePath }}/internal/app/mapper"
+	"{{ .ModulePath }}/internal/app/model"
+	"{{ .ModulePath }}/internal/app/repository"
+	"{{ .ModulePath }}/internal/platform/token"
+)
+
+const passwordResetPrefix = "pwreset:"
+
+type AuthService struct {
+	cfg    *config.Config
+	users  *repository.UserRepository
+	tokens *repository.TokenRepository
+	paseto *token.Paseto
+	redis  *redis.Client
+	mailer mailer.Mailer
+	audit  *audit.Logger
+}
+
+func NewAuthService(
+	cfg *config.Config,
+	users *repository.UserRepository,
+	tokens *repository.TokenRepository,
+	p *token.Paseto,
+	r *redis.Client,
+	m mailer.Mailer,
+	a *audit.Logger,
+) *AuthService {
+	return &AuthService{cfg: cfg, users: users, tokens: tokens, paseto: p, redis: r, mailer: m, audit: a}
+}
+
+// Register creates a new user. Email uniqueness is enforced at the DB level;
+// we check here to return a friendlier error code.
+func (s *AuthService) Register(ctx context.Context, r request.Register) (*model.User, error) {
+	existing, err := s.users.FindByEmail(ctx, r.Email)
+	if err != nil {
+		return nil, apperror.Internal(err)
+	}
+	if existing != nil {
+		return nil, apperror.Conflict(apperror.CodeUserEmailAlreadyExists)
+	}
+
+	hash, err := bcrypt.GenerateFromPassword([]byte(r.Password), constant.BcryptCost)
+	if err != nil {
+		return nil, apperror.Internal(err)
+	}
+	u := mapper.FromRegisterRequest(r, string(hash))
+	if err := s.users.Create(ctx, u); err != nil {
+		return nil, apperror.Internal(err)
+	}
+
+	s.audit.Log(ctx, audit.ActionUserCreated, "user", u.ID.String(), nil)
+	return u, nil
+}
+
+// Login issues an access + refresh token on valid credentials.
+func (s *AuthService) Login(ctx context.Context, r request.Login) (respdto.Tokens, error) {
+	u, err := s.users.FindByEmail(ctx, r.Email)
+	if err != nil {
+		return respdto.Tokens{}, apperror.Internal(err)
+	}
+	if u == nil {
+		return respdto.Tokens{}, apperror.Unauthorized(apperror.CodeAuthCredentialsInvalid)
+	}
+
+	if n, _ := s.redis.Exists(ctx, cache.KeyLockoutUser+u.ID.String()).Result(); n > 0 {
+		return respdto.Tokens{}, apperror.Unauthorized(apperror.CodeAuthAccountLocked)
+	}
+
+	if err := bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte(r.Password)); err != nil {
+		s.registerFailedLogin(ctx, u.ID)
+		s.audit.Log(ctx, audit.ActionLoginFailed, "user", u.ID.String(), nil)
+		return respdto.Tokens{}, apperror.Unauthorized(apperror.CodeAuthCredentialsInvalid)
+	}
+
+	_ = s.redis.Del(ctx, cache.KeyLockoutFail+u.ID.String()).Err()
+	return s.issuePair(ctx, u, uuid.Nil)
+}
+
+func (s *AuthService) registerFailedLogin(ctx context.Context, id uuid.UUID) {
+	key := cache.KeyLockoutFail + id.String()
+	count, err := s.redis.Incr(ctx, key).Result()
+	if err != nil {
+		return
+	}
+	if count == 1 {
+		_ = s.redis.Expire(ctx, key, s.cfg.Lockout.Duration).Err()
+	}
+	if count >= int64(s.cfg.Lockout.MaxAttempts) {
+		_ = s.redis.Set(ctx, cache.KeyLockoutUser+id.String(), "1", s.cfg.Lockout.Duration).Err()
+	}
+}
+
+// Refresh rotates a refresh token, detecting reuse (burns the family).
+func (s *AuthService) Refresh(ctx context.Context, r request.Refresh) (respdto.Tokens, error) {
+	hash := hashToken(r.RefreshToken)
+	rt, err := s.tokens.FindByHash(ctx, hash)
+	if err != nil {
+		return respdto.Tokens{}, apperror.Internal(err)
+	}
+	if rt == nil {
+		return respdto.Tokens{}, apperror.Unauthorized(apperror.CodeAuthTokenInvalid)
+	}
+	if rt.RevokedAt != nil {
+		_ = s.tokens.RevokeFamily(ctx, rt.FamilyID)
+		return respdto.Tokens{}, apperror.Unauthorized(apperror.CodeAuthRefreshReused)
+	}
+	if time.Now().After(rt.ExpiresAt) {
+		return respdto.Tokens{}, apperror.Unauthorized(apperror.CodeAuthTokenExpired)
+	}
+
+	_ = s.tokens.Revoke(ctx, rt.ID)
+	u, err := s.users.FindByID(ctx, rt.UserID)
+	if err != nil {
+		return respdto.Tokens{}, apperror.Internal(err)
+	}
+	if u == nil {
+		return respdto.Tokens{}, apperror.Unauthorized(apperror.CodeAuthTokenInvalid)
+	}
+	return s.issuePair(ctx, u, rt.FamilyID)
+}
+
+// Logout blacklists the current access token JTI until its natural expiry.
+func (s *AuthService) Logout(ctx context.Context, jti string, expires time.Time) error {
+	ttl := time.Until(expires)
+	if ttl <= 0 {
+		return nil
+	}
+	if err := s.redis.Set(ctx, cache.KeyBlacklist+jti, "1", ttl).Err(); err != nil {
+		return apperror.Internal(err)
+	}
+	s.audit.Log(ctx, audit.ActionLogout, "user", ctxkey.UserID(ctx), nil)
+	return nil
+}
+
+// ForgotPassword emails a reset token (1h) to the user, if the user exists.
+// Always returns nil to avoid account enumeration.
+func (s *AuthService) ForgotPassword(ctx context.Context, email string) error {
+	u, err := s.users.FindByEmail(ctx, email)
+	if err != nil || u == nil {
+		return nil
+	}
+
+	raw := randomString(32)
+	key := passwordResetPrefix + hashToken(raw)
+	if err := s.redis.Set(ctx, key, u.ID.String(), time.Hour).Err(); err != nil {
+		return apperror.Internal(err)
+	}
+
+	link := s.cfg.Security.FrontendURL + "/reset-password?token=" + raw
+	_ = s.mailer.Send(ctx, mailer.Message{
+		To:       u.Email,
+		Template: "reset_password",
+		Lang:     u.Locale,
+		Data: map[string]any{
+			"AppName": s.cfg.App.Name,
+			"Name":    u.Name,
+			"Link":    link,
+		},
+	})
+	return nil
+}
+
+// ResetPassword consumes a reset token and updates the password.
+func (s *AuthService) ResetPassword(ctx context.Context, tok, newPW string) error {
+	key := passwordResetPrefix + hashToken(tok)
+	uidStr, err := s.redis.Get(ctx, key).Result()
+	if errors.Is(err, redis.Nil) {
+		return apperror.Unauthorized(apperror.CodeAuthTokenInvalid)
+	}
+	if err != nil {
+		return apperror.Internal(err)
+	}
+	_ = s.redis.Del(ctx, key).Err()
+
+	uid, err := uuid.Parse(uidStr)
+	if err != nil {
+		return apperror.Unauthorized(apperror.CodeAuthTokenInvalid)
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(newPW), constant.BcryptCost)
+	if err != nil {
+		return apperror.Internal(err)
+	}
+	if err := s.users.UpdatePassword(ctx, uid, string(hash)); err != nil {
+		return apperror.Internal(err)
+	}
+	s.audit.Log(ctx, audit.ActionPasswordReset, "user", uid.String(), nil)
+	return nil
+}
+
+func (s *AuthService) issuePair(ctx context.Context, u *model.User, family uuid.UUID) (respdto.Tokens, error) {
+	access, claims, err := s.paseto.Issue(u.ID.String(), u.Role)
+	if err != nil {
+		return respdto.Tokens{}, apperror.Internal(err)
+	}
+
+	raw := randomString(32)
+	if family == uuid.Nil {
+		family, err = uuid.NewV7()
+		if err != nil {
+			return respdto.Tokens{}, apperror.Internal(err)
+		}
+	}
+	if err := s.tokens.Create(ctx, &model.RefreshToken{
+		UserID:    u.ID,
+		TokenHash: hashToken(raw),
+		FamilyID:  family,
+		ExpiresAt: time.Now().Add(s.cfg.Paseto.RefreshTokenTTL),
+	}); err != nil {
+		return respdto.Tokens{}, apperror.Internal(err)
+	}
+
+	s.audit.Log(ctx, audit.ActionLoginSuccess, "user", u.ID.String(), map[string]any{"jti": claims.JTI})
+
+	return respdto.Tokens{
+		AccessToken:  access,
+		RefreshToken: raw,
+		ExpiresIn:    int64(s.paseto.TTL().Seconds()),
+		TokenType:    "Bearer",
+	}, nil
+}
+
+func hashToken(t string) string {
+	sum := sha256.Sum256([]byte(t))
+	return hex.EncodeToString(sum[:])
+}
+
+func randomString(n int) string {
+	b := make([]byte, n)
+	_, _ = rand.Read(b)
+	return base64.RawURLEncoding.EncodeToString(b)
+}

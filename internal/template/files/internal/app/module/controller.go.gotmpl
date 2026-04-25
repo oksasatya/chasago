@@ -1,0 +1,14 @@
+package module
+
+import (
+	"go.uber.org/fx"
+
+	"{{ .ModulePath }}/internal/app/controller"
+)
+
+var Controller = fx.Module("controller",
+	fx.Provide(
+		controller.NewUserController,
+		controller.NewAuthController,
+	),
+)

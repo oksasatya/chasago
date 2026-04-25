@@ -1,0 +1,27 @@
+package module
+
+import (
+	"context"
+
+	goredis "github.com/redis/go-redis/v9"
+	"go.uber.org/fx"
+	"go.uber.org/zap"
+
+	"{{ .ModulePath }}/internal/pkg/cache"
+	"{{ .ModulePath }}/internal/platform/redis"
+)
+
+var Redis = fx.Module("redis",
+	fx.Provide(redis.New),
+	fx.Provide(cache.New),
+	fx.Invoke(registerRedisLifecycle),
+)
+
+func registerRedisLifecycle(lc fx.Lifecycle, c *goredis.Client, l *zap.Logger) {
+	lc.Append(fx.Hook{
+		OnStop: func(_ context.Context) error {
+			l.Info("closing redis")
+			return c.Close()
+		},
+	})
+}

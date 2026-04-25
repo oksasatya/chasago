@@ -1,0 +1,13 @@
+package module
+
+import (
+	"go.uber.org/fx"
+
+	"{{ .ModulePath }}/internal/platform/token"
+	"{{ .ModulePath }}/internal/pkg/validator"
+)
+
+var Auth = fx.Module("auth",
+	fx.Provide(token.NewPaseto),
+	fx.Provide(validator.New),
+)

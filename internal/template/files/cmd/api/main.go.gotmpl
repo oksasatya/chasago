@@ -1,16 +1,21 @@
 package main
 
 import (
+	"context"
+	"flag"
+	"os"
+	"strings"
 	"time"
 
 	"go.uber.org/fx"
 
-	"{{ .ModulePath }}/internal/admin"
-	"{{ .ModulePath }}/internal/config"
-	"{{ .ModulePath }}/internal/migrate"
-	"{{ .ModulePath }}/internal/module"
-	"{{ .ModulePath }}/internal/router"
-	"{{ .ModulePath }}/internal/seeder"
+	"{{ .ModulePath }}/internal/app/module"
+	"{{ .ModulePath }}/internal/app/router"
+	"{{ .ModulePath }}/internal/platform/config"
+	"{{ .ModulePath }}/internal/database"
+	"{{ .ModulePath }}/internal/platform/logger"
+	"{{ .ModulePath }}/internal/database/migrations"
+	"{{ .ModulePath }}/internal/database/seeders"
 )
 
 func main() {
@@ -20,12 +25,67 @@ func main() {
 		time.Local = loc
 	}
 
+	if len(os.Args) > 1 && os.Args[1] == "seed" {
+		os.Exit(runSeed(cfg, os.Args[2:]))
+	}
+
+	runServer(cfg)
+}
+
+func runServer(cfg *config.Config) {
 	fx.New(
 		module.All(cfg),
-		fx.Invoke(migrate.AutoUp),
-		fx.Invoke(seeder.AutoRun),
-		fx.Invoke(admin.Ensure),
+		fx.Invoke(migrations.AutoUp),
 		fx.Invoke(router.Register),
 		fx.WithLogger(module.FxZapLogger),
 	).Run()
+}
+
+// runSeed handles `app seed [--only=name1,name2]`. Bypasses fx — boot is
+// faster and we don't want HTTP listeners coming up during seeding.
+func runSeed(cfg *config.Config, args []string) int {
+	fs := flag.NewFlagSet("seed", flag.ContinueOnError)
+	only := fs.String("only", "", "comma-separated seeder names to run (default: all)")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+
+	l := logger.New(cfg)
+	defer func() { _ = l.Sync() }()
+
+	db, err := database.NewPostgres(cfg)
+	if err != nil {
+		l.Sugar().Errorf("connect db: %v", err)
+		return 1
+	}
+	defer func() { _ = db.Close() }()
+
+	// Apply pending migrations first — fresh databases would fail seed
+	// inserts otherwise.
+	if err := migrations.Up(db, cfg, l); err != nil {
+		l.Sugar().Errorf("migrate: %v", err)
+		return 1
+	}
+
+	if err := seeders.NewDatabaseSeeder().Run(context.Background(), db, l, splitCSV(*only)...); err != nil {
+		l.Sugar().Errorf("seed: %v", err)
+		return 1
+	}
+	l.Info("seed done")
+	return 0
+}
+
+func splitCSV(s string) []string {
+	if s == "" {
+		return nil
+	}
+	parts := strings.Split(s, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }

@@ -1,0 +1,16 @@
+package seeders
+
+import (
+	"context"
+
+	"github.com/jmoiron/sqlx"
+	"go.uber.org/zap"
+)
+
+// Seeder is the contract every concrete seeder satisfies. Implementations MUST
+// be idempotent — calling Run twice on the same database is a supported
+// operation (use UPSERTs or existence checks).
+type Seeder interface {
+	Name() string
+	Run(ctx context.Context, db *sqlx.DB, l *zap.Logger) error
+}

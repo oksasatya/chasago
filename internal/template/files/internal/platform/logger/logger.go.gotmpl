@@ -1,0 +1,69 @@
+package logger
+
+import (
+	"os"
+	"strings"
+
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+	"gopkg.in/natefinch/lumberjack.v2"
+
+	"{{ .ModulePath }}/internal/platform/config"
+)
+
+func New(cfg *config.Config) *zap.Logger {
+	level := parseLevel(cfg.Log.Level)
+
+	var consoleEnc zapcore.Encoder
+	if cfg.App.Env == "development" {
+		consoleEnc = zapcore.NewConsoleEncoder(devEncoderConfig())
+	} else {
+		consoleEnc = zapcore.NewJSONEncoder(prodEncoderConfig())
+	}
+
+	fileEnc := zapcore.NewJSONEncoder(prodEncoderConfig())
+	fileWS := zapcore.AddSync(&lumberjack.Logger{
+		Filename:   cfg.Log.File,
+		MaxSize:    cfg.Log.MaxSizeMB,
+		MaxBackups: cfg.Log.MaxBackups,
+		MaxAge:     cfg.Log.MaxAgeDays,
+		Compress:   true,
+	})
+
+	core := zapcore.NewTee(
+		zapcore.NewCore(consoleEnc, zapcore.AddSync(os.Stdout), level),
+		zapcore.NewCore(fileEnc, fileWS, level),
+	)
+
+	return zap.New(core,
+		zap.AddCaller(),
+		zap.AddStacktrace(zapcore.ErrorLevel),
+	)
+}
+
+func parseLevel(s string) zapcore.Level {
+	switch strings.ToLower(s) {
+	case "debug":
+		return zapcore.DebugLevel
+	case "warn", "warning":
+		return zapcore.WarnLevel
+	case "error":
+		return zapcore.ErrorLevel
+	default:
+		return zapcore.InfoLevel
+	}
+}
+
+func devEncoderConfig() zapcore.EncoderConfig {
+	cfg := zap.NewDevelopmentEncoderConfig()
+	cfg.EncodeLevel = zapcore.CapitalColorLevelEncoder
+	cfg.EncodeTime = zapcore.ISO8601TimeEncoder
+	return cfg
+}
+
+func prodEncoderConfig() zapcore.EncoderConfig {
+	cfg := zap.NewProductionEncoderConfig()
+	cfg.EncodeTime = zapcore.ISO8601TimeEncoder
+	cfg.TimeKey = "ts"
+	return cfg
+}

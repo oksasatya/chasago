@@ -106,7 +106,12 @@ func printNextSteps(w io.Writer, appName string) {
 		"  1. cp .env.example .env\n" +
 		"  2. edit .env (DB_PASSWORD, PASETO_SYMMETRIC_KEY, SMTP_*, FRONTEND_URL)\n" +
 		"  3. docker compose up -d postgres redis\n" +
-		"  4. make dev\n\n" +
+		"  4. make migrate-up\n" +
+		"  5. make seed              # super-admin + 50 dummy users\n" +
+		"  6. make dev\n\n" +
+		"Scaffold helpers:\n" +
+		"  make seeder name=Post     # internal/database/seeders/post_seeder.go\n" +
+		"  make factory name=Post    # internal/database/factories/post_factory.go\n\n" +
 		"Default admin (ganti setelah login pertama):\n" +
 		"  email:    admin@local\n" +
 		"  password: Admin@123\n"

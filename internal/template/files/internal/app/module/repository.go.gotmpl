@@ -1,0 +1,17 @@
+package module
+
+import (
+	"go.uber.org/fx"
+
+	"{{ .ModulePath }}/internal/pkg/audit"
+	"{{ .ModulePath }}/internal/app/repository"
+)
+
+var Repository = fx.Module("repository",
+	fx.Provide(
+		repository.NewUserRepository,
+		repository.NewTokenRepository,
+		repository.NewAuditRepository,
+		audit.NewLogger,
+	),
+)

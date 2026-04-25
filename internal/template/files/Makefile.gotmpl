@@ -7,7 +7,7 @@ APP      ?= {{ .AppName }}
 BIN      ?= ./bin/$(APP)
 MAIN     ?= ./cmd/api
 DB_URL   ?= postgres://$(DB_USER):$(DB_PASSWORD)@$(DB_HOST):$(DB_PORT)/$(DB_NAME)?sslmode=$(DB_SSLMODE)
-MIGRATIONS ?= ./internal/migrate/migrations
+MIGRATIONS ?= ./internal/database/migrations
 
 ## help: show this help
 help:
@@ -71,12 +71,29 @@ migrate-version:
 migrate-create:
 	@migrate create -ext sql -dir $(MIGRATIONS) -seq $(name)
 
+## seed: run all seeders (admin + dummy users + roles)
+seed:
+	@go run $(MAIN) seed
+
+## seed-only: run a specific seeder. Usage: make seed-only name=user
+seed-only:
+	@go run $(MAIN) seed --only=$(name)
+
+## seeder: scaffold a new seeder file. Usage: make seeder name=Post
+seeder:
+	@bash scripts/scaffold-seeder.sh $(name)
+
+## factory: scaffold a new factory file. Usage: make factory name=Post
+factory:
+	@bash scripts/scaffold-factory.sh $(name)
+
 ## db-reset: drop schema, recreate, apply migrations, seed
 db-reset:
 	@PGPASSWORD=$(DB_PASSWORD) psql -h $(DB_HOST) -p $(DB_PORT) -U $(DB_USER) -d $(DB_NAME) \
 		-c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
 	@$(MAKE) migrate-up
-	@echo "✓ db reset. Server will auto-seed on next start."
+	@$(MAKE) seed
+	@echo "✓ db reset and seeded."
 
 ## docker-up: start postgres + redis via docker-compose
 docker-up:
@@ -90,4 +107,4 @@ docker-down:
 docker-build:
 	@docker build -t $(APP):latest .
 
-.PHONY: help tools init-env env-check dev run build test lint migrate-up migrate-down migrate-force migrate-version migrate-create db-reset docker-up docker-down docker-build
+.PHONY: help tools init-env env-check dev run build test lint migrate-up migrate-down migrate-force migrate-version migrate-create seed seed-only seeder factory db-reset docker-up docker-down docker-build

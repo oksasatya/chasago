@@ -1,0 +1,116 @@
+package token
+
+import (
+	"encoding/hex"
+	"fmt"
+	"time"
+
+	"aidanwoods.dev/go-paseto"
+	"github.com/google/uuid"
+
+	"{{ .ModulePath }}/internal/platform/config"
+)
+
+type Claims struct {
+	Subject string
+	JTI     string
+	Role    string
+	Issued  time.Time
+	Expires time.Time
+}
+
+type Paseto struct {
+	key v4SymmetricKey
+	ttl time.Duration
+}
+
+// Wrap to allow returning by value in NewPaseto without leaking paseto package.
+type v4SymmetricKey = paseto.V4SymmetricKey
+
+func NewPaseto(cfg *config.Config) (*Paseto, error) {
+	raw := cfg.Paseto.SymmetricKey
+	if raw == "" {
+		// Auto-generate an ephemeral key at startup so dev boots without
+		// manual setup. In production, set PASETO_SYMMETRIC_KEY explicitly.
+		return &Paseto{
+			key: paseto.NewV4SymmetricKey(),
+			ttl: cfg.Paseto.AccessTokenTTL,
+		}, nil
+	}
+
+	k, err := parseKey(raw)
+	if err != nil {
+		return nil, fmt.Errorf("paseto key: %w", err)
+	}
+	return &Paseto{key: k, ttl: cfg.Paseto.AccessTokenTTL}, nil
+}
+
+func parseKey(raw string) (paseto.V4SymmetricKey, error) {
+	// Accept hex (64 chars) or treat as already-32-byte string.
+	if len(raw) == 64 {
+		b, err := hex.DecodeString(raw)
+		if err == nil && len(b) == 32 {
+			return paseto.V4SymmetricKeyFromBytes(b)
+		}
+	}
+	if len(raw) == 32 {
+		return paseto.V4SymmetricKeyFromBytes([]byte(raw))
+	}
+	return paseto.V4SymmetricKey{}, fmt.Errorf("key must be 32 bytes or 64-char hex (got %d)", len(raw))
+}
+
+// Issue signs a new access token.
+func (p *Paseto) Issue(userID, role string) (string, Claims, error) {
+	now := time.Now()
+	jti, err := uuid.NewV7()
+	if err != nil {
+		return "", Claims{}, err
+	}
+
+	t := paseto.NewToken()
+	t.SetSubject(userID)
+	t.SetJti(jti.String())
+	t.SetIssuedAt(now)
+	t.SetNotBefore(now)
+	t.SetExpiration(now.Add(p.ttl))
+	t.Set("role", role)
+	t.Set("type", TypeAccess)
+
+	signed := t.V4Encrypt(p.key, nil)
+	return signed, Claims{
+		Subject: userID,
+		JTI:     jti.String(),
+		Role:    role,
+		Issued:  now,
+		Expires: now.Add(p.ttl),
+	}, nil
+}
+
+// Verify decrypts & validates a token.
+func (p *Paseto) Verify(raw string) (*Claims, error) {
+	parser := paseto.NewParser()
+	parser.AddRule(paseto.NotExpired())
+	parser.AddRule(paseto.ValidAt(time.Now()))
+
+	t, err := parser.ParseV4Local(p.key, raw, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	sub, _ := t.GetSubject()
+	jti, _ := t.GetJti()
+	exp, _ := t.GetExpiration()
+	iat, _ := t.GetIssuedAt()
+	role, _ := t.GetString("role")
+
+	return &Claims{
+		Subject: sub,
+		JTI:     jti,
+		Role:    role,
+		Issued:  iat,
+		Expires: exp,
+	}, nil
+}
+
+// TTL returns the access token TTL.
+func (p *Paseto) TTL() time.Duration { return p.ttl }

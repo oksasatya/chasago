@@ -1,0 +1,49 @@
+package middleware
+
+import (
+	"net/http"
+	"strconv"
+	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/redis/go-redis/v9"
+
+	"{{ .ModulePath }}/internal/pkg/apperror"
+	"{{ .ModulePath }}/internal/pkg/cache"
+	"{{ .ModulePath }}/internal/pkg/response"
+)
+
+// RateLimit limits the number of requests per IP per window.
+// Uses a simple fixed-window INCR counter in Redis.
+// rps = requests allowed per window (seconds).
+func RateLimit(r *redis.Client, rps int, windowSec int, route string) gin.HandlerFunc {
+	if rps <= 0 {
+		rps = 10
+	}
+	if windowSec <= 0 {
+		windowSec = 1
+	}
+
+	return func(c *gin.Context) {
+		key := cache.KeyRateLimit + route + ":" + c.ClientIP()
+		ctx := c.Request.Context()
+
+		count, err := r.Incr(ctx, key).Result()
+		if err != nil {
+			c.Next()
+			return
+		}
+		if count == 1 {
+			_ = r.Expire(ctx, key, time.Duration(windowSec)*time.Second).Err()
+		}
+		if count > int64(rps) {
+			c.Writer.Header().Set("Retry-After", strconv.Itoa(windowSec))
+			response.Error(c, (&apperror.AppError{
+				Code:    http.StatusTooManyRequests,
+				Message: apperror.CodeRateLimitExceeded,
+			}))
+			return
+		}
+		c.Next()
+	}
+}

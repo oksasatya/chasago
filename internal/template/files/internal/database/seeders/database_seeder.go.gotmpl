@@ -1,0 +1,58 @@
+package seeders
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/jmoiron/sqlx"
+	"go.uber.org/zap"
+)
+
+// DatabaseSeeder is the entry point for `app seed` — it invokes every
+// registered seeder in declaration order. Mirrors Laravel's
+// DatabaseSeeder::run().
+type DatabaseSeeder struct {
+	seeders []Seeder
+}
+
+// NewDatabaseSeeder wires the default seeder set. Add new seeders to this
+// slice to have them run by `make seed`.
+func NewDatabaseSeeder() *DatabaseSeeder {
+	return &DatabaseSeeder{
+		seeders: []Seeder{
+			RoleSeeder{},
+			UserSeeder{},
+		},
+	}
+}
+
+// Run executes each seeder. When `only` is non-empty, only seeders whose
+// Name() appears in the slice are executed.
+func (d *DatabaseSeeder) Run(ctx context.Context, db *sqlx.DB, l *zap.Logger, only ...string) error {
+	skip := buildSkipFilter(only)
+	for _, s := range d.seeders {
+		if skip(s.Name()) {
+			l.Info("skip seeder", zap.String("name", s.Name()))
+			continue
+		}
+		l.Info("running seeder", zap.String("name", s.Name()))
+		if err := s.Run(ctx, db, l); err != nil {
+			return fmt.Errorf("seed %s: %w", s.Name(), err)
+		}
+	}
+	return nil
+}
+
+func buildSkipFilter(only []string) func(string) bool {
+	if len(only) == 0 {
+		return func(string) bool { return false }
+	}
+	allow := make(map[string]struct{}, len(only))
+	for _, n := range only {
+		allow[n] = struct{}{}
+	}
+	return func(name string) bool {
+		_, ok := allow[name]
+		return !ok
+	}
+}

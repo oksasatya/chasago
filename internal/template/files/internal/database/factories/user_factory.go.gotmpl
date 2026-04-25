@@ -1,0 +1,63 @@
+package factories
+
+import (
+	"github.com/brianvoe/gofakeit/v7"
+	"github.com/google/uuid"
+	"golang.org/x/crypto/bcrypt"
+
+	"{{ .ModulePath }}/internal/app/model"
+	"{{ .ModulePath }}/internal/pkg/constant"
+)
+
+// DefaultPassword is the plaintext password assigned to factory-generated
+// users. Convenient for local dev — change before any non-dev seeding.
+const DefaultPassword = "Password@123"
+
+// UserFactory builds *model.User instances populated with fake data.
+// Mirrors Laravel's factory pattern: NewUser().Count(50).State(fn).Make().
+type UserFactory struct {
+	count     int
+	overrides func(*model.User)
+}
+
+func NewUser() *UserFactory { return &UserFactory{count: 1} }
+
+func (f *UserFactory) Count(n int) *UserFactory {
+	f.count = n
+	return f
+}
+
+// State accepts a callback that mutates each generated user — useful for
+// pinning specific fields (e.g. setting role to admin).
+func (f *UserFactory) State(fn func(*model.User)) *UserFactory {
+	f.overrides = fn
+	return f
+}
+
+// Make returns the populated users. The same bcrypt hash is reused across
+// every generated user — bcrypt is intentionally slow, so hashing N times
+// would dominate seeder runtime.
+func (f *UserFactory) Make() ([]*model.User, error) {
+	hash, err := bcrypt.GenerateFromPassword([]byte(DefaultPassword), constant.BcryptCost)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]*model.User, 0, f.count)
+	for i := 0; i < f.count; i++ {
+		u := &model.User{
+			ID:           uuid.New(),
+			Email:        gofakeit.Email(),
+			PasswordHash: string(hash),
+			Name:         gofakeit.Name(),
+			Role:         model.RoleUser,
+			Status:       model.StatusActive,
+			Locale:       "en",
+		}
+		if f.overrides != nil {
+			f.overrides(u)
+		}
+		out = append(out, u)
+	}
+	return out, nil
+}
