@@ -38,9 +38,13 @@ type DB struct {
 	MaxIdleConns int    `mapstructure:"DB_MAX_IDLE_CONNS"`
 }
 
+// DSN returns the Postgres connection string. search_path=public is pinned
+// explicitly because golang-migrate's postgres driver calls CURRENT_SCHEMA()
+// at init and fails with ErrNoSchema if it resolves to NULL — which can
+// happen with pgx when the role's default search_path is unset.
 func (d DB) DSN() string {
 	return fmt.Sprintf(
-		"postgres://%s:%s@%s:%d/%s?sslmode=%s",
+		"postgres://%s:%s@%s:%d/%s?sslmode=%s&search_path=public",
 		d.User, d.Password, d.Host, d.Port, d.Name, d.SSLMode,
 	)
 }

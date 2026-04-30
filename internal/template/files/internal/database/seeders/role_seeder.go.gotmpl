@@ -8,21 +8,13 @@ import (
 )
 
 // RoleSeeder seeds the `roles` lookup table. Safe to re-run — UPSERTs by
-// primary key (`name`).
+// primary key (`name`). The `roles` table itself is created by the
+// init_schema migration; this seeder only inserts data.
 type RoleSeeder struct{}
 
 func (RoleSeeder) Name() string { return "role" }
 
 func (RoleSeeder) Run(ctx context.Context, db *sqlx.DB, l *zap.Logger) error {
-	const ddl = `
-        CREATE TABLE IF NOT EXISTS roles (
-            name        TEXT PRIMARY KEY,
-            description TEXT NOT NULL DEFAULT ''
-        )`
-	if _, err := db.ExecContext(ctx, ddl); err != nil {
-		return err
-	}
-
 	rows := []struct {
 		Name, Description string
 	}{

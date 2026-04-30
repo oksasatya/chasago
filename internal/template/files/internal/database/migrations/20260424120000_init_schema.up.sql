@@ -6,6 +6,12 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+-- roles (lookup table; data is populated by RoleSeeder)
+CREATE TABLE roles (
+    name        TEXT PRIMARY KEY,
+    description TEXT NOT NULL DEFAULT ''
+);
+
 -- users
 CREATE TABLE users (
     id              UUID        PRIMARY KEY,

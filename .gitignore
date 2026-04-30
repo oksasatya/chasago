@@ -30,3 +30,4 @@ go.work.sum
 
 # Node (autoskills tooling)
 node_modules/
+.docs
