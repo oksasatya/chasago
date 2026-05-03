@@ -1,27 +1,27 @@
 package controller
 
 import (
-	"time"
-
 	"github.com/gin-gonic/gin"
 
 	"{{ .ModulePath }}/internal/pkg/apperror"
 	"{{ .ModulePath }}/internal/app/dto/request"
 	"{{ .ModulePath }}/internal/app/mapper"
+	"{{ .ModulePath }}/internal/pkg/cookie"
+	"{{ .ModulePath }}/internal/pkg/ctxkey"
 	"{{ .ModulePath }}/internal/pkg/response"
 	"{{ .ModulePath }}/internal/app/service"
-	"{{ .ModulePath }}/internal/platform/token"
+	"{{ .ModulePath }}/internal/platform/config"
 	"{{ .ModulePath }}/internal/pkg/validator"
 )
 
 type AuthController struct {
+	cfg *config.Config
 	svc *service.AuthService
 	v   *validator.Validator
-	p   *token.Paseto
 }
 
-func NewAuthController(svc *service.AuthService, v *validator.Validator, p *token.Paseto) *AuthController {
-	return &AuthController{svc: svc, v: v, p: p}
+func NewAuthController(cfg *config.Config, svc *service.AuthService, v *validator.Validator) *AuthController {
+	return &AuthController{cfg: cfg, svc: svc, v: v}
 }
 
 func (h *AuthController) Register(c *gin.Context) {
@@ -42,6 +42,9 @@ func (h *AuthController) Register(c *gin.Context) {
 	response.Created(c, "user", mapper.ToUserResponse(u))
 }
 
+// Login validates credentials and writes the token pair into HttpOnly cookies.
+// The response body is intentionally empty ({meta, data: []}) — clients fetch
+// user info via GET /api/me after the cookies are set.
 func (h *AuthController) Login(c *gin.Context) {
 	var req request.Login
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -52,49 +55,49 @@ func (h *AuthController) Login(c *gin.Context) {
 		response.Error(c, err)
 		return
 	}
-	tokens, err := h.svc.Login(c.Request.Context(), req)
+	_, pair, err := h.svc.Login(c.Request.Context(), req)
 	if err != nil {
 		response.Error(c, err)
 		return
 	}
-	response.Success(c, "tokens", tokens)
+	h.setAuthCookies(c, pair)
+	response.SuccessEmpty(c)
 }
 
+// Refresh rotates the token pair. The refresh token is read strictly from
+// the cookie — there is no body fallback.
 func (h *AuthController) Refresh(c *gin.Context) {
-	var req request.Refresh
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.Error(c, apperror.BadRequest(apperror.CodeBadRequest).WithCause(err))
-		return
-	}
-	if err := h.v.Struct(req); err != nil {
-		response.Error(c, err)
-		return
-	}
-	tokens, err := h.svc.Refresh(c.Request.Context(), req)
-	if err != nil {
-		response.Error(c, err)
-		return
-	}
-	response.Success(c, "tokens", tokens)
-}
-
-func (h *AuthController) Logout(c *gin.Context) {
-	// Auth middleware has already verified the token — re-parse to get JTI + exp.
-	raw := c.GetHeader("Authorization")
-	if len(raw) <= len("Bearer ") {
+	rt := cookie.RefreshFromRequest(c.Request)
+	if rt == "" {
 		response.Error(c, apperror.Unauthorized(apperror.CodeAuthUnauthenticated))
 		return
 	}
-	claims, err := h.p.Verify(raw[len("Bearer "):])
+	_, pair, err := h.svc.Refresh(c.Request.Context(), rt)
 	if err != nil {
-		response.Error(c, apperror.Unauthorized(apperror.CodeAuthTokenInvalid))
-		return
-	}
-	if err := h.svc.Logout(c.Request.Context(), claims.JTI, claims.Expires); err != nil {
 		response.Error(c, err)
 		return
 	}
-	response.Success(c, "result", gin.H{"logged_out_at": time.Now()})
+	h.setAuthCookies(c, pair)
+	response.SuccessEmpty(c)
+}
+
+// Logout blacklists the current access token's JTI and clears auth cookies.
+// JTI and expiry are read from the request context, where the Auth middleware
+// injected them after verifying the cookie.
+func (h *AuthController) Logout(c *gin.Context) {
+	ctx := c.Request.Context()
+	jti := ctxkey.TokenJTI(ctx)
+	exp := ctxkey.TokenExpires(ctx)
+	if jti == "" || exp.IsZero() {
+		response.Error(c, apperror.Unauthorized(apperror.CodeAuthUnauthenticated))
+		return
+	}
+	if err := h.svc.Logout(ctx, jti, exp); err != nil {
+		response.Error(c, err)
+		return
+	}
+	cookie.Clear(c, h.cfg.App.IsProduction())
+	response.SuccessEmpty(c)
 }
 
 func (h *AuthController) ForgotPassword(c *gin.Context) {
@@ -129,4 +132,10 @@ func (h *AuthController) ResetPassword(c *gin.Context) {
 		return
 	}
 	response.Success(c, "result", gin.H{"reset": true})
+}
+
+func (h *AuthController) setAuthCookies(c *gin.Context, pair service.TokenPair) {
+	secure := h.cfg.App.IsProduction()
+	cookie.SetAccess(c, pair.AccessToken, pair.AccessTTL, secure)
+	cookie.SetRefresh(c, pair.RefreshToken, pair.RefreshTTL, secure)
 }

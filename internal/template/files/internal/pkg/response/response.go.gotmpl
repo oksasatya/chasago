@@ -48,6 +48,16 @@ func Created(c *gin.Context, resource string, data any) {
 // NoContent sends 204 with empty body.
 func NoContent(c *gin.Context) { c.Status(http.StatusNoContent) }
 
+// SuccessEmpty writes {meta, data: []} with 200 status. Used by endpoints
+// whose side-effect is fully expressed via response headers (e.g. cookies on
+// login/refresh) and whose body has no payload.
+func SuccessEmpty(c *gin.Context) {
+	c.JSON(http.StatusOK, envelope{
+		Meta: buildMeta(c, nil),
+		Data: []any{},
+	})
+}
+
 // Paginated writes list response with pagination meta.
 func Paginated(c *gin.Context, resource string, items any, p pagination.Meta) {
 	c.JSON(http.StatusOK, envelope{

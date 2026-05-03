@@ -20,7 +20,6 @@ import (
 	"{{ .ModulePath }}/internal/pkg/constant"
 	"{{ .ModulePath }}/internal/pkg/ctxkey"
 	"{{ .ModulePath }}/internal/app/dto/request"
-	respdto "{{ .ModulePath }}/internal/app/dto/response"
 	"{{ .ModulePath }}/internal/platform/mailer"
 	"{{ .ModulePath }}/internal/app/mapper"
 	"{{ .ModulePath }}/internal/app/model"
@@ -29,6 +28,17 @@ import (
 )
 
 const passwordResetPrefix = "pwreset:"
+
+// TokenPair carries an issued access + refresh token pair between the auth
+// service and the controller. It is *internal* — not a response DTO. The
+// controller writes these values to HttpOnly cookies and never returns them
+// in the response body.
+type TokenPair struct {
+	AccessToken  string
+	AccessTTL    time.Duration
+	RefreshToken string
+	RefreshTTL   time.Duration
+}
 
 type AuthService struct {
 	cfg    *config.Config
@@ -76,28 +86,32 @@ func (s *AuthService) Register(ctx context.Context, r request.Register) (*model.
 	return u, nil
 }
 
-// Login issues an access + refresh token on valid credentials.
-func (s *AuthService) Login(ctx context.Context, r request.Login) (respdto.Tokens, error) {
+// Login validates credentials and issues a fresh token pair.
+func (s *AuthService) Login(ctx context.Context, r request.Login) (*model.User, TokenPair, error) {
 	u, err := s.users.FindByEmail(ctx, r.Email)
 	if err != nil {
-		return respdto.Tokens{}, apperror.Internal(err)
+		return nil, TokenPair{}, apperror.Internal(err)
 	}
 	if u == nil {
-		return respdto.Tokens{}, apperror.Unauthorized(apperror.CodeAuthCredentialsInvalid)
+		return nil, TokenPair{}, apperror.Unauthorized(apperror.CodeAuthCredentialsInvalid)
 	}
 
 	if n, _ := s.redis.Exists(ctx, cache.KeyLockoutUser+u.ID.String()).Result(); n > 0 {
-		return respdto.Tokens{}, apperror.Unauthorized(apperror.CodeAuthAccountLocked)
+		return nil, TokenPair{}, apperror.Unauthorized(apperror.CodeAuthAccountLocked)
 	}
 
 	if err := bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte(r.Password)); err != nil {
 		s.registerFailedLogin(ctx, u.ID)
 		s.audit.Log(ctx, audit.ActionLoginFailed, "user", u.ID.String(), nil)
-		return respdto.Tokens{}, apperror.Unauthorized(apperror.CodeAuthCredentialsInvalid)
+		return nil, TokenPair{}, apperror.Unauthorized(apperror.CodeAuthCredentialsInvalid)
 	}
 
 	_ = s.redis.Del(ctx, cache.KeyLockoutFail+u.ID.String()).Err()
-	return s.issuePair(ctx, u, uuid.Nil)
+	pair, err := s.issuePair(ctx, u, uuid.Nil)
+	if err != nil {
+		return nil, TokenPair{}, err
+	}
+	return u, pair, nil
 }
 
 func (s *AuthService) registerFailedLogin(ctx context.Context, id uuid.UUID) {
@@ -115,32 +129,38 @@ func (s *AuthService) registerFailedLogin(ctx context.Context, id uuid.UUID) {
 }
 
 // Refresh rotates a refresh token, detecting reuse (burns the family).
-func (s *AuthService) Refresh(ctx context.Context, r request.Refresh) (respdto.Tokens, error) {
-	hash := hashToken(r.RefreshToken)
+// refreshToken is the raw cookie value; the controller is responsible for
+// reading it from the request cookie.
+func (s *AuthService) Refresh(ctx context.Context, refreshToken string) (*model.User, TokenPair, error) {
+	hash := hashToken(refreshToken)
 	rt, err := s.tokens.FindByHash(ctx, hash)
 	if err != nil {
-		return respdto.Tokens{}, apperror.Internal(err)
+		return nil, TokenPair{}, apperror.Internal(err)
 	}
 	if rt == nil {
-		return respdto.Tokens{}, apperror.Unauthorized(apperror.CodeAuthTokenInvalid)
+		return nil, TokenPair{}, apperror.Unauthorized(apperror.CodeAuthTokenInvalid)
 	}
 	if rt.RevokedAt != nil {
 		_ = s.tokens.RevokeFamily(ctx, rt.FamilyID)
-		return respdto.Tokens{}, apperror.Unauthorized(apperror.CodeAuthRefreshReused)
+		return nil, TokenPair{}, apperror.Unauthorized(apperror.CodeAuthRefreshReused)
 	}
 	if time.Now().After(rt.ExpiresAt) {
-		return respdto.Tokens{}, apperror.Unauthorized(apperror.CodeAuthTokenExpired)
+		return nil, TokenPair{}, apperror.Unauthorized(apperror.CodeAuthTokenExpired)
 	}
 
 	_ = s.tokens.Revoke(ctx, rt.ID)
 	u, err := s.users.FindByID(ctx, rt.UserID)
 	if err != nil {
-		return respdto.Tokens{}, apperror.Internal(err)
+		return nil, TokenPair{}, apperror.Internal(err)
 	}
 	if u == nil {
-		return respdto.Tokens{}, apperror.Unauthorized(apperror.CodeAuthTokenInvalid)
+		return nil, TokenPair{}, apperror.Unauthorized(apperror.CodeAuthTokenInvalid)
 	}
-	return s.issuePair(ctx, u, rt.FamilyID)
+	pair, err := s.issuePair(ctx, u, rt.FamilyID)
+	if err != nil {
+		return nil, TokenPair{}, err
+	}
+	return u, pair, nil
 }
 
 // Logout blacklists the current access token JTI until its natural expiry.
@@ -211,17 +231,17 @@ func (s *AuthService) ResetPassword(ctx context.Context, tok, newPW string) erro
 	return nil
 }
 
-func (s *AuthService) issuePair(ctx context.Context, u *model.User, family uuid.UUID) (respdto.Tokens, error) {
+func (s *AuthService) issuePair(ctx context.Context, u *model.User, family uuid.UUID) (TokenPair, error) {
 	access, claims, err := s.paseto.Issue(u.ID.String(), u.Role)
 	if err != nil {
-		return respdto.Tokens{}, apperror.Internal(err)
+		return TokenPair{}, apperror.Internal(err)
 	}
 
 	raw := randomString(32)
 	if family == uuid.Nil {
 		family, err = uuid.NewV7()
 		if err != nil {
-			return respdto.Tokens{}, apperror.Internal(err)
+			return TokenPair{}, apperror.Internal(err)
 		}
 	}
 	if err := s.tokens.Create(ctx, &model.RefreshToken{
@@ -230,16 +250,16 @@ func (s *AuthService) issuePair(ctx context.Context, u *model.User, family uuid.
 		FamilyID:  family,
 		ExpiresAt: time.Now().Add(s.cfg.Paseto.RefreshTokenTTL),
 	}); err != nil {
-		return respdto.Tokens{}, apperror.Internal(err)
+		return TokenPair{}, apperror.Internal(err)
 	}
 
 	s.audit.Log(ctx, audit.ActionLoginSuccess, "user", u.ID.String(), map[string]any{"jti": claims.JTI})
 
-	return respdto.Tokens{
+	return TokenPair{
 		AccessToken:  access,
+		AccessTTL:    s.cfg.Paseto.AccessTokenTTL,
 		RefreshToken: raw,
-		ExpiresIn:    int64(s.paseto.TTL().Seconds()),
-		TokenType:    "Bearer",
+		RefreshTTL:   s.cfg.Paseto.RefreshTokenTTL,
 	}, nil
 }
 

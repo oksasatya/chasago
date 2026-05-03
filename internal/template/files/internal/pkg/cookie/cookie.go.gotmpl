@@ -1,0 +1,75 @@
+// Package cookie centralizes auth cookie I/O. The auth flow is strict
+// HttpOnly cookie-only — never read from or write tokens to response bodies
+// or Authorization headers. See docs/boilerplate-fixes.md §7.
+package cookie
+
+import (
+	"net/http"
+	"time"
+
+	"github.com/gin-gonic/gin"
+)
+
+const (
+	// AccessName is the cookie name carrying the Paseto access token.
+	AccessName = "access_token"
+	// RefreshName is the cookie name carrying the opaque refresh token.
+	RefreshName = "refresh_token"
+	// AccessPath scopes the access cookie to /api so it is sent on every
+	// authenticated request.
+	AccessPath = "/api"
+	// RefreshPath scopes the refresh cookie strictly to the refresh endpoint
+	// to limit blast radius if it ever leaks to a sub-handler.
+	RefreshPath = "/api/auth"
+)
+
+// AccessFromRequest returns the access token from the request cookie, or "".
+func AccessFromRequest(r *http.Request) string {
+	c, err := r.Cookie(AccessName)
+	if err != nil {
+		return ""
+	}
+	return c.Value
+}
+
+// RefreshFromRequest returns the refresh token from the request cookie, or "".
+func RefreshFromRequest(r *http.Request) string {
+	c, err := r.Cookie(RefreshName)
+	if err != nil {
+		return ""
+	}
+	return c.Value
+}
+
+// SetAccess writes the access cookie. secure should be true in production.
+func SetAccess(c *gin.Context, value string, ttl time.Duration, secure bool) {
+	write(c, AccessName, value, AccessPath, ttl, secure)
+}
+
+// SetRefresh writes the refresh cookie. secure should be true in production.
+func SetRefresh(c *gin.Context, value string, ttl time.Duration, secure bool) {
+	write(c, RefreshName, value, RefreshPath, ttl, secure)
+}
+
+// Clear overwrites both auth cookies with an immediately-expiring value.
+// Used on logout and on detected token reuse.
+func Clear(c *gin.Context, secure bool) {
+	write(c, AccessName, "", AccessPath, -time.Second, secure)
+	write(c, RefreshName, "", RefreshPath, -time.Second, secure)
+}
+
+func write(c *gin.Context, name, value, path string, ttl time.Duration, secure bool) {
+	maxAge := int(ttl.Seconds())
+	if ttl <= 0 {
+		maxAge = -1
+	}
+	http.SetCookie(c.Writer, &http.Cookie{
+		Name:     name,
+		Value:    value,
+		Path:     path,
+		HttpOnly: true,
+		Secure:   secure,
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   maxAge,
+	})
+}

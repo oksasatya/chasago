@@ -2,6 +2,7 @@ package ctxkey
 
 import (
 	"context"
+	"time"
 
 	"go.uber.org/zap"
 )
@@ -13,6 +14,8 @@ const (
 	userIDKey
 	userRoleKey
 	loggerKey
+	tokenJTIKey
+	tokenExpiresKey
 )
 
 func WithRequestID(ctx context.Context, id string) context.Context {
@@ -57,4 +60,26 @@ func Logger(ctx context.Context) *zap.Logger {
 		return v
 	}
 	return zap.NewNop()
+}
+
+func WithTokenJTI(ctx context.Context, jti string) context.Context {
+	return context.WithValue(ctx, tokenJTIKey, jti)
+}
+
+func TokenJTI(ctx context.Context) string {
+	if v, ok := ctx.Value(tokenJTIKey).(string); ok {
+		return v
+	}
+	return ""
+}
+
+func WithTokenExpires(ctx context.Context, exp time.Time) context.Context {
+	return context.WithValue(ctx, tokenExpiresKey, exp)
+}
+
+func TokenExpires(ctx context.Context) time.Time {
+	if v, ok := ctx.Value(tokenExpiresKey).(time.Time); ok {
+		return v
+	}
+	return time.Time{}
 }

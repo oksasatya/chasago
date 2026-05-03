@@ -15,7 +15,6 @@ func CORS(cfg *config.Config) gin.HandlerFunc {
 		AllowOrigins: cfg.Security.OriginList(),
 		AllowMethods: []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
 		AllowHeaders: []string{
-			constant.HeaderAuthorization,
 			constant.HeaderContentType,
 			constant.HeaderRequestID,
 			constant.HeaderAcceptLanguage,

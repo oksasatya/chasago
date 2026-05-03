@@ -1,29 +1,27 @@
 package middleware
 
 import (
-	"strings"
-
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
 
 	"{{ .ModulePath }}/internal/pkg/apperror"
 	"{{ .ModulePath }}/internal/pkg/cache"
-	"{{ .ModulePath }}/internal/pkg/constant"
+	"{{ .ModulePath }}/internal/pkg/cookie"
 	"{{ .ModulePath }}/internal/pkg/ctxkey"
 	"{{ .ModulePath }}/internal/pkg/response"
 	"{{ .ModulePath }}/internal/platform/token"
 )
 
-// Auth verifies the Paseto bearer token, checks the blacklist, and injects
-// user_id/user_role into the request context.
+// Auth verifies the Paseto access token from the HttpOnly cookie, checks the
+// blacklist, and injects user_id, user_role, jti, and token expiry into the
+// request context. Strict cookie-only — no Authorization header fallback.
 func Auth(paseto *token.Paseto, r *redis.Client) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		raw := c.GetHeader(constant.HeaderAuthorization)
-		if !strings.HasPrefix(raw, "Bearer ") {
+		tok := cookie.AccessFromRequest(c.Request)
+		if tok == "" {
 			response.Error(c, apperror.Unauthorized(apperror.CodeAuthUnauthenticated))
 			return
 		}
-		tok := strings.TrimPrefix(raw, "Bearer ")
 
 		claims, err := paseto.Verify(tok)
 		if err != nil {
@@ -39,6 +37,8 @@ func Auth(paseto *token.Paseto, r *redis.Client) gin.HandlerFunc {
 
 		ctx := ctxkey.WithUserID(c.Request.Context(), claims.Subject)
 		ctx = ctxkey.WithUserRole(ctx, claims.Role)
+		ctx = ctxkey.WithTokenJTI(ctx, claims.JTI)
+		ctx = ctxkey.WithTokenExpires(ctx, claims.Expires)
 		c.Request = c.Request.WithContext(ctx)
 		c.Next()
 	}

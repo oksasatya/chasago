@@ -3,6 +3,7 @@ package router
 import (
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
+	"go.uber.org/fx"
 	"go.uber.org/zap"
 
 	"{{ .ModulePath }}/internal/platform/config"
@@ -12,9 +13,12 @@ import (
 	"{{ .ModulePath }}/internal/platform/token"
 )
 
-// Deps groups everything needed by Register. Using a struct keeps the fx.Invoke
-// signature tidy even as the app grows.
+// Deps groups everything needed by Register. fx.In marks this as a parameter
+// object so fx fills the fields from the dependency graph instead of asking
+// for a single Deps provider.
 type Deps struct {
+	fx.In
+
 	Engine   *gin.Engine
 	Cfg      *config.Config
 	Logger   *zap.Logger

@@ -1,8 +1,6 @@
 package response
 
-type Tokens struct {
-	AccessToken  string `json:"access_token"`
-	RefreshToken string `json:"refresh_token"`
-	ExpiresIn    int64  `json:"expires_in"`
-	TokenType    string `json:"token_type"`
-}
+// Auth-related response DTOs intentionally have no token payload here.
+// Authentication is HttpOnly cookie-based — Login and Refresh write tokens
+// into Set-Cookie headers and respond with an empty data envelope. See
+// docs/boilerplate-fixes.md §7.

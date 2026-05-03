@@ -27,6 +27,10 @@ type App struct {
 	Timezone string `mapstructure:"APP_TIMEZONE"`
 }
 
+// IsProduction reports whether the app is running in production. Drives
+// security flags like Secure cookies.
+func (a App) IsProduction() bool { return a.Env == "production" }
+
 type DB struct {
 	Host         string `mapstructure:"DB_HOST"`
 	Port         int    `mapstructure:"DB_PORT"`

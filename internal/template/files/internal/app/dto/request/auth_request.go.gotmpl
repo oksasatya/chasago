@@ -11,9 +11,8 @@ type Login struct {
 	Password string `json:"password" validate:"required"`
 }
 
-type Refresh struct {
-	RefreshToken string `json:"refresh_token" validate:"required"`
-}
+// Refresh has no body — the refresh token is read from an HttpOnly cookie.
+// See docs/boilerplate-fixes.md §7.
 
 type ForgotPassword struct {
 	Email string `json:"email" validate:"required,email"`

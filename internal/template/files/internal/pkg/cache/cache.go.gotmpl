@@ -1,3 +1,32 @@
+// Package cache wraps the Redis client with JSON helpers for the
+// cache-aside pattern used across services in this app.
+//
+// Cache-aside contract — read endpoints SHOULD follow this shape so the
+// service stays stateless (Redis owns the cached state, not the struct):
+//
+//	// READ: Redis-first
+//	var v T
+//	if err := c.GetJSON(ctx, key, &v); err == nil {
+//	    return &v, nil
+//	} else if !errors.Is(err, cache.ErrMiss) {
+//	    // Redis down → fall through to DB; cache is an optimization,
+//	    // not a hard dependency.
+//	}
+//	got, err := repo.Find(ctx, id)
+//	if err != nil {
+//	    return nil, apperror.Internal(err)
+//	}
+//	_ = c.SetJSON(ctx, key, got, ttl) // best-effort
+//	return got, nil
+//
+//	// WRITE: invalidate-on-write, synchronously, in the same request.
+//	if err := repo.Update(ctx, ...); err != nil { return ... }
+//	_ = c.Del(ctx, key)
+//
+// Apply cache-aside when reads >> writes (≥10:1), staleness up to ~1 min is
+// tolerable, and the cache key is deterministic (id-based, not filter-combo).
+// Skip for mutations, payment status, or filter-combo list endpoints.
+// See docs/boilerplate-fixes.md §9.
 package cache
 
 import (
@@ -9,6 +38,10 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+// ErrMiss is returned by GetJSON when the key is not present in Redis.
+// Callers MUST distinguish this from connection errors — on miss, fall
+// through to the DB; on connection error, also fall through (don't fail
+// the request just because cache is down).
 var ErrMiss = errors.New("cache miss")
 
 type Cache struct {
